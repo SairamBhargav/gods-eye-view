@@ -499,6 +499,7 @@
   "src/layers/cctv/source.test.mjs",
   "src/data/alprCameras.js",
   "src/data/alprCameras.test.mjs",
+  "src/data/dataCredits.test.mjs",
   "src/layers/alpr/index.js",
   "src/layers/alpr/model.js",
   "src/layers/alpr/policy.js",
@@ -770,5 +771,6 @@
   "src/layers/cyclones/source.js",
   "src/layers/cyclones/rendering.test.mjs",
   "src/layers/cyclones/index.test.mjs",
-  "src/layers/cyclones/source.test.mjs"
+  "src/layers/cyclones/source.test.mjs",
+  "src/data/aisStreamSentinels.test.mjs"
 ]
