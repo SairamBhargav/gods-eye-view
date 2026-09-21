@@ -79,7 +79,11 @@ export function createWeatherRendering({
       cancelIncoming();
       const { collection, kind } = getHost();
       if (kind === 'none') return false;
-      if (current?.time === time && current.product === snapshot.product && current.kind === kind)
+      if (
+        current?.time === time &&
+        current.product === snapshot.product &&
+        current.kind === kind
+      )
         return true;
       lastError = null;
       const { west, south, east, north } = snapshot.bounds;

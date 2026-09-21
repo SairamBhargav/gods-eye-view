@@ -1,5 +1,10 @@
 /** Tile a global geographic field raster without network requests or scene state. */
-export function createRasterTileProvider({ cesium, raster, credit, createCanvas }) {
+export function createRasterTileProvider({
+  cesium,
+  raster,
+  credit,
+  createCanvas,
+}) {
   const texture = createCanvas();
   texture.width = raster.width;
   texture.height = raster.height;
@@ -28,9 +33,20 @@ export function createRasterTileProvider({ cesium, raster, credit, createCanvas 
       tile.width = tile.height = 256;
       const ctx = tile.getContext('2d');
       const width = raster.width / tilingScheme.getNumberOfXTilesAtLevel(level);
-      const height = raster.height / tilingScheme.getNumberOfYTilesAtLevel(level);
+      const height =
+        raster.height / tilingScheme.getNumberOfYTilesAtLevel(level);
       ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(texture, x * width, y * height, width, height, 0, 0, 256, 256);
+      ctx.drawImage(
+        texture,
+        x * width,
+        y * height,
+        width,
+        height,
+        0,
+        0,
+        256,
+        256,
+      );
       return tile;
     },
   };

@@ -287,7 +287,12 @@ export function createWindRendering({
   function updateImageryFade(camera, settled = false) {
     // ModelImagery resets draw commands when alpha changes. Wait for moveEnd
     // on tilesets; globe imagery keeps its smooth per-frame fade.
-    if (!imagery || !camera?.positionCartographic || (imageryKind === 'tileset' && !settled)) return;
+    if (
+      !imagery ||
+      !camera?.positionCartographic ||
+      (imageryKind === 'tileset' && !settled)
+    )
+      return;
     const height = camera.positionCartographic.height;
     const fade =
       height <= WIND_FIELD_FADE_LOW_METERS
@@ -298,7 +303,10 @@ export function createWindRendering({
             WIND_FIELD_LOG_RANGE;
     const baseAlpha = overlay === 'temperature' ? 1 : 0.85;
     const smoothAlpha = baseAlpha * fade;
-    const alpha = imageryKind === 'tileset' ? Math.round(smoothAlpha * 10) / 10 : smoothAlpha;
+    const alpha =
+      imageryKind === 'tileset'
+        ? Math.round(smoothAlpha * 10) / 10
+        : smoothAlpha;
     if (Math.abs(imagery.alpha - alpha) > 0.005) imagery.alpha = alpha;
     const show = alpha > 0;
     if (imagery.show !== show) imagery.show = show;
@@ -313,14 +321,18 @@ export function createWindRendering({
       imageryError = NO_IMAGERY_HOST;
       return;
     }
-    const raster = kind === 'tileset'
-      ? createFieldRaster(snapshot, overlay, 720, 362)
-      : createFieldRaster(snapshot, overlay);
+    const raster =
+      kind === 'tileset'
+        ? createFieldRaster(snapshot, overlay, 720, 362)
+        : createFieldRaster(snapshot, overlay);
     if (!raster) {
       imageryError = `${overlay} field unavailable`;
       return;
     }
-    if (!collection || (kind === 'globe' && !cesium.SingleTileImageryProvider)) {
+    if (
+      !collection ||
+      (kind === 'globe' && !cesium.SingleTileImageryProvider)
+    ) {
       imageryError = 'Globe imagery unavailable';
       return;
     }
@@ -330,23 +342,26 @@ export function createWindRendering({
         provider = createRasterTileProvider({
           cesium,
           raster,
-          credit: new cesium.Credit(snapshot.model === 'ifs' ? 'ECMWF IFS' : 'NOAA GFS', false),
+          credit: new cesium.Credit(
+            snapshot.model === 'ifs' ? 'ECMWF IFS' : 'NOAA GFS',
+            false,
+          ),
           createCanvas: () => document.createElement('canvas'),
         });
       } else {
-      const texture = document.createElement('canvas');
-      texture.width = raster.width;
-      texture.height = raster.height;
-      const ctx = texture.getContext('2d');
-      const pixels = ctx.createImageData(raster.width, raster.height);
-      pixels.data.set(raster.rgba);
-      ctx.putImageData(pixels, 0, 0);
-      provider = new cesium.SingleTileImageryProvider({
-        url: texture.toDataURL('image/png'),
-        tileWidth: raster.width,
-        tileHeight: raster.height,
-        rectangle: cesium.Rectangle.MAX_VALUE,
-      });
+        const texture = document.createElement('canvas');
+        texture.width = raster.width;
+        texture.height = raster.height;
+        const ctx = texture.getContext('2d');
+        const pixels = ctx.createImageData(raster.width, raster.height);
+        pixels.data.set(raster.rgba);
+        ctx.putImageData(pixels, 0, 0);
+        provider = new cesium.SingleTileImageryProvider({
+          url: texture.toDataURL('image/png'),
+          tileWidth: raster.width,
+          tileHeight: raster.height,
+          rectangle: cesium.Rectangle.MAX_VALUE,
+        });
       }
       imagery = collection.addImageryProvider(provider);
       orderWeatherImagery(collection, imagery, 0);
@@ -384,7 +399,8 @@ export function createWindRendering({
       }
       viewerReady()?.scene?.requestRender?.();
     }
-    if (gpuActive && kind !== 'none') updateImageryFade(viewerReady()?.scene?.camera, true);
+    if (gpuActive && kind !== 'none')
+      updateImageryFade(viewerReady()?.scene?.camera, true);
     if (kind === 'none') imageryError = NO_IMAGERY_HOST;
     else if (wasHidden) {
       imageryError = null;

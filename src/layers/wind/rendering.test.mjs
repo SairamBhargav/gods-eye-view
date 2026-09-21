@@ -451,7 +451,11 @@ for (const overlay of ['speed', 'pressure', 'temperature']) {
     h.preRender.emit();
     camera.changed.emit();
     camera.moveEnd.emit();
-    assert.equal(layer.alphaWrites, writes, 'unchanged height never writes alpha');
+    assert.equal(
+      layer.alphaWrites,
+      writes,
+      'unchanged height never writes alpha',
+    );
 
     camera.positionCartographic.height = Math.sqrt(200_000 * 1_200_000);
     h.preRender.emit();
@@ -461,10 +465,18 @@ for (const overlay of ['speed', 'pressure', 'temperature']) {
     h.preRender.emit();
     camera.positionCartographic.height *= 1.001;
     h.preRender.emit();
-    assert.equal(layer.alphaWrites, midpointWrites, 'sub-0.005 changes are skipped');
+    assert.equal(
+      layer.alphaWrites,
+      midpointWrites,
+      'sub-0.005 changes are skipped',
+    );
     camera.positionCartographic.height *= 1.02;
     h.preRender.emit();
-    assert.equal(layer.alphaWrites, midpointWrites + 1, 'larger changes write alpha');
+    assert.equal(
+      layer.alphaWrites,
+      midpointWrites + 1,
+      'larger changes write alpha',
+    );
 
     camera.positionCartographic.height = 100_000;
     h.preRender.emit();
@@ -483,7 +495,11 @@ for (const overlay of ['speed', 'pressure', 'temperature']) {
       camera.positionCartographic.height = 1_200_000;
       (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
       assert.equal(layer.alpha, baseAlpha, 'camera event restores full alpha');
-      assert.equal(layer.show, true, 'camera event unhides imagery without preRender');
+      assert.equal(
+        layer.show,
+        true,
+        'camera event unhides imagery without preRender',
+      );
       camera.positionCartographic.height = 200_000;
       (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
       assert.equal(layer.alpha, 0, 'lower bound is transparent');
@@ -492,9 +508,17 @@ for (const overlay of ['speed', 'pressure', 'temperature']) {
     h.rendering.setOptions({ paused: true });
     camera.positionCartographic.height = 1_200_000;
     h.preRender.emit();
-    assert.equal(layer.alpha, baseAlpha, 'paused imagery still follows camera height');
+    assert.equal(
+      layer.alpha,
+      baseAlpha,
+      'paused imagery still follows camera height',
+    );
     assert.equal(h.pending.size, 0);
-    assert.equal(h.textures.length, 2, 'height changes never rebuild the texture');
+    assert.equal(
+      h.textures.length,
+      2,
+      'height changes never rebuild the texture',
+    );
     h.rendering.destroy();
   });
 }
@@ -902,7 +926,11 @@ for (const eventName of ['preRender', 'moveEnd']) {
 
     camera.positionCartographic.height = 60000;
     (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
-    assert.equal(renders, eventName === 'preRender' ? 0 : 1, 'moveEnd wakes the parked scene');
+    assert.equal(
+      renders,
+      eventName === 'preRender' ? 0 : 1,
+      'moveEnd wakes the parked scene',
+    );
     assert.equal(h.pending.size, 1);
     h.callbacks.shift()(16);
     assert.equal(times.length, 1);
@@ -946,11 +974,14 @@ for (const eventName of ['preRender', 'moveEnd']) {
   });
 }
 
-
 test('scalar host replaces incompatible providers and retains imagery through no-host events', () => {
   const eventTarget = new EventTarget();
   let host;
-  const h = harness({ eventTarget, getHost: () => host ?? { collection: h.viewer.imageryLayers, kind: 'globe' } });
+  const h = harness({
+    eventTarget,
+    getHost: () =>
+      host ?? { collection: h.viewer.imageryLayers, kind: 'globe' },
+  });
   h.rendering.attach();
   h.rendering.setOptions({ overlay: 'speed' });
   h.rendering.setField(FIELD);
@@ -959,12 +990,25 @@ test('scalar host replaces incompatible providers and retains imagery through no
   assert.ok(original);
   const items = [];
   const collection = {
-    add(layer) { items.push(layer); },
-    addImageryProvider(provider) { const layer = { provider }; items.push(layer); return layer; },
-    remove(layer, destroy) { items.splice(items.indexOf(layer), 1); if (destroy) layer.destroyed = true; },
-    get length() { return items.length; },
-    get: i => items[i],
-    raiseToTop(layer) { items.push(...items.splice(items.indexOf(layer), 1)); },
+    add(layer) {
+      items.push(layer);
+    },
+    addImageryProvider(provider) {
+      const layer = { provider };
+      items.push(layer);
+      return layer;
+    },
+    remove(layer, destroy) {
+      items.splice(items.indexOf(layer), 1);
+      if (destroy) layer.destroyed = true;
+    },
+    get length() {
+      return items.length;
+    },
+    get: (i) => items[i],
+    raiseToTop(layer) {
+      items.push(...items.splice(items.indexOf(layer), 1));
+    },
   };
   host = { collection, kind: 'tileset' };
   eventTarget.dispatchEvent(new Event('gev:map-stack-changed'));
@@ -979,7 +1023,10 @@ test('scalar host replaces incompatible providers and retains imagery through no
   host = { collection: null, kind: 'none' };
   eventTarget.dispatchEvent(new Event('gev:map-stack-changed'));
   assert.equal(items.length, 0);
-  assert.equal(h.rendering.getDiagnostics().imageryError, 'Hidden by this map source · choose a globe map');
+  assert.equal(
+    h.rendering.getDiagnostics().imageryError,
+    'Hidden by this map source · choose a globe map',
+  );
   host = { collection, kind: 'tileset' };
   h.rendering.rehome();
   assert.deepEqual(items, [tiled]);
@@ -998,7 +1045,10 @@ test('scalar installation with no host reports hidden and installs on restore', 
   h.rendering.setField(FIELD);
   assert.equal(h.imagery.length, 0);
   assert.equal(h.textures.length, 0);
-  assert.equal(h.rendering.getDiagnostics().imageryError, 'Hidden by this map source · choose a globe map');
+  assert.equal(
+    h.rendering.getDiagnostics().imageryError,
+    'Hidden by this map source · choose a globe map',
+  );
   host = { collection: h.viewer.imageryLayers, kind: 'globe' };
   h.rendering.rehome();
   assert.equal(h.imagery.length, 1);
@@ -1009,14 +1059,30 @@ test('scalar installation with no host reports hidden and installs on restore', 
 for (const overlay of ['speed', 'temperature', 'pressure']) {
   test(`${overlay} tileset alpha changes only on moveEnd, install or rehome in 0.1 steps`, () => {
     const gpu = {
-      supported: () => true, setField: () => true, updateVisibility: () => true,
-      tick() {}, setOptions() {}, clear() {}, destroy() {},
-      getParticleCount: () => 1, getDiagnostics: () => ({ ready: true }),
+      supported: () => true,
+      setField: () => true,
+      updateVisibility: () => true,
+      tick() {},
+      setOptions() {},
+      clear() {},
+      destroy() {},
+      getParticleCount: () => 1,
+      getDiagnostics: () => ({ ready: true }),
     };
     let kind = 'tileset';
-    const h = harness({ createGpuRendering: () => gpu, getHost: () => ({ collection: h.viewer.imageryLayers, kind }) });
+    const h = harness({
+      createGpuRendering: () => gpu,
+      getHost: () => ({ collection: h.viewer.imageryLayers, kind }),
+    });
     const camera = h.viewer.scene.camera;
-    const field = { ...FIELD, scalar: { kind: overlay, units: overlay === 'pressure' ? 'hPa' : '°C', values: Float32Array.of(overlay === 'pressure' ? 1013 : 20) } };
+    const field = {
+      ...FIELD,
+      scalar: {
+        kind: overlay,
+        units: overlay === 'pressure' ? 'hPa' : '°C',
+        values: Float32Array.of(overlay === 'pressure' ? 1013 : 20),
+      },
+    };
     camera.positionCartographic.height = Math.sqrt(200_000 * 1_200_000);
     h.rendering.attach();
     h.rendering.setOptions({ overlay });
@@ -1029,7 +1095,11 @@ for (const overlay of ['speed', 'temperature', 'pressure']) {
     camera.positionCartographic.height = 100_000;
     h.preRender.emit();
     h.rendering.setOptions({ paused: true });
-    assert.equal(layer.alphaWrites, writes, 'preRender and pause do not change tileset alpha');
+    assert.equal(
+      layer.alphaWrites,
+      writes,
+      'preRender and pause do not change tileset alpha',
+    );
     camera.moveEnd.emit();
     assert.equal(layer.alpha, 0);
     assert.equal(layer.show, false);
@@ -1038,7 +1108,11 @@ for (const overlay of ['speed', 'temperature', 'pressure']) {
     writes = layer.alphaWrites;
     camera.positionCartographic.height *= 1.01;
     camera.moveEnd.emit();
-    assert.equal(layer.alphaWrites, writes, 'same quantization bucket avoids draw-command rebuilds');
+    assert.equal(
+      layer.alphaWrites,
+      writes,
+      'same quantization bucket avoids draw-command rebuilds',
+    );
     camera.positionCartographic.height = 1_200_000;
     h.rendering.rehome();
     assert.equal(layer.alpha, overlay === 'temperature' ? 1 : 0.9);

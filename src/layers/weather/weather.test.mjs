@@ -861,7 +861,14 @@ for (const statusCode of [429, 503]) {
     h.providers[0].response.reject(new Error('throttled'));
     await assert.rejects(rejected, /throttled/);
     for (let timesRetried = 0; timesRetried < 3; timesRetried++) {
-      const error = { error: { statusCode }, x: 0, y: 0, level: 0, timesRetried, retry: false };
+      const error = {
+        error: { statusCode },
+        x: 0,
+        y: 0,
+        level: 0,
+        timesRetried,
+        retry: false,
+      };
       h.providers[0].errorEvent.emit(error);
       assert.equal(error.retry, true);
       assert.equal(h.rendering.getDiagnostics().error, null);
@@ -959,8 +966,18 @@ test('host restore through update stages latest after a no-host start', async ()
 for (const kind of ['globe', 'tileset']) {
   test(`real Cesium global infrared provider supports the ${kind} host`, async () => {
     const collection = new Cesium.ImageryLayerCollection();
-    const h = renderingHarness({ cesium: Cesium, getHost: () => ({ collection, kind }) });
-    const stage = h.rendering.setFrame({ ...snapshot, product: 'clouds', bounds: { west: -180, south: -60, east: 180, north: 60 } }, times[0]);
+    const h = renderingHarness({
+      cesium: Cesium,
+      getHost: () => ({ collection, kind }),
+    });
+    const stage = h.rendering.setFrame(
+      {
+        ...snapshot,
+        product: 'clouds',
+        bounds: { west: -180, south: -60, east: 180, north: 60 },
+      },
+      times[0],
+    );
     const layer = collection.get(0);
     const provider = layer.imageryProvider;
     assert.ok(provider instanceof Cesium.UrlTemplateImageryProvider);
@@ -968,8 +985,16 @@ for (const kind of ['globe', 'tileset']) {
     assert.equal(provider.maximumLevel, kind === 'tileset' ? 3 : 0);
     assert.equal(provider.tileWidth, kind === 'tileset' ? 256 : 2048);
     assert.equal(provider.tileHeight, kind === 'tileset' ? 256 : 1024);
-    assert.equal(provider.tilingScheme.getNumberOfXTilesAtLevel(0), kind === 'tileset' ? 2 : 1);
-    assert.match(provider.url, kind === 'tileset' ? /weather\/tile\?product=clouds/ : /weather\/image\?product=clouds/);
+    assert.equal(
+      provider.tilingScheme.getNumberOfXTilesAtLevel(0),
+      kind === 'tileset' ? 2 : 1,
+    );
+    assert.match(
+      provider.url,
+      kind === 'tileset'
+        ? /weather\/tile\?product=clouds/
+        : /weather\/image\?product=clouds/,
+    );
     assert.equal(layer.colorToAlphaThreshold, 0.55);
     assert.ok(Cesium.Color.equals(layer.colorToAlpha, Cesium.Color.BLACK));
     h.rendering.clear();
@@ -982,7 +1007,10 @@ test('global infrared rehomes by staging a compatible provider at the retained t
   const globe = new ImageryLayerCollection();
   let host = { collection: globe, kind: 'globe' };
   const h = renderingHarness({ getHost: () => host, now: () => now });
-  const stage = h.rendering.setFrame({ ...snapshot, product: 'clouds' }, times[0]);
+  const stage = h.rendering.setFrame(
+    { ...snapshot, product: 'clouds' },
+    times[0],
+  );
   h.settle();
   assert.equal(await stage, true);
   const tiles = new ImageryLayerCollection();
@@ -1023,13 +1051,18 @@ for (const statusCode of [429, 503]) {
     for (let x = 0; x < 4; x++) assert.equal(fail(x, x + 4), true);
     provider.response = { promise: Promise.resolve({}) };
     await provider.requestImage(0, 0, 2);
-    for (let i = 0; i < 3; i++) assert.equal(fail(0), true, 'own success reset the count');
+    for (let i = 0; i < 3; i++)
+      assert.equal(fail(0), true, 'own success reset the count');
     for (let i = 0; i < 2; i++) {
       await provider.requestImage(2, 0, 2);
       assert.equal(fail(1), true);
     }
     await provider.requestImage(3, 0, 2);
-    assert.equal(fail(1), false, 'four failures exhaust this tile despite other successes');
+    assert.equal(
+      fail(1),
+      false,
+      'four failures exhaust this tile despite other successes',
+    );
     h.settle();
     assert.equal(await stage, false);
     assert.equal(provider.errorEvent.size, 0);

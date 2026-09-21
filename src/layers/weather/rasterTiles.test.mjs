@@ -9,13 +9,20 @@ import { createFieldRaster } from '../wind/fields.js';
 function createCanvas() {
   const canvas = { width: 0, height: 0 };
   const context = {
-    createImageData: (width, height) => ({ data: new Uint8ClampedArray(width * height * 4) }),
-    putImageData(pixels) { canvas.rgba = pixels.data; },
-    drawImage(source, ...args) { canvas.source = source; canvas.crop = args; },
+    createImageData: (width, height) => ({
+      data: new Uint8ClampedArray(width * height * 4),
+    }),
+    putImageData(pixels) {
+      canvas.rgba = pixels.data;
+    },
+    drawImage(source, ...args) {
+      canvas.source = source;
+      canvas.crop = args;
+    },
     getImageData(x, y) {
       const [sx, sy, sw, sh, dx, dy, dw, dh] = canvas.crop;
-      const col = Math.floor(sx + (x - dx + 0.5) * sw / dw);
-      const row = Math.floor(sy + (y - dy + 0.5) * sh / dh);
+      const col = Math.floor(sx + ((x - dx + 0.5) * sw) / dw);
+      const row = Math.floor(sy + ((y - dy + 0.5) * sh) / dh);
       const offset = (row * canvas.source.width + col) * 4;
       return { data: canvas.source.rgba.slice(offset, offset + 4) };
     },
@@ -25,13 +32,31 @@ function createCanvas() {
 }
 
 test('real Cesium geographic raster provider crops level 0/1 wind tiles with preserved pixels', () => {
-  const raster = createFieldRaster({
-    nx: 8, ny: 3, lo1: -180, la1: 90, dx: 45, dy: 90,
-    u: Float32Array.from([0, 0, 10, 10, 20, 20, 30, 30, 0, 0, 10, 10, 20, 20, 30, 30, 30, 30, 20, 20, 10, 10, 0, 0]),
-    v: new Float32Array(24),
-  }, 'speed', 720, 362);
+  const raster = createFieldRaster(
+    {
+      nx: 8,
+      ny: 3,
+      lo1: -180,
+      la1: 90,
+      dx: 45,
+      dy: 90,
+      u: Float32Array.from([
+        0, 0, 10, 10, 20, 20, 30, 30, 0, 0, 10, 10, 20, 20, 30, 30, 30, 30, 20,
+        20, 10, 10, 0, 0,
+      ]),
+      v: new Float32Array(24),
+    },
+    'speed',
+    720,
+    362,
+  );
   const credit = new Cesium.Credit('NOAA GFS');
-  const provider = createRasterTileProvider({ cesium: Cesium, raster, credit, createCanvas });
+  const provider = createRasterTileProvider({
+    cesium: Cesium,
+    raster,
+    credit,
+    createCanvas,
+  });
   assert.ok(provider.tilingScheme instanceof Cesium.GeographicTilingScheme);
   assert.equal(provider.rectangle, Cesium.Rectangle.MAX_VALUE);
   assert.equal(provider.minimumLevel, 0);
@@ -57,6 +82,9 @@ test('real Cesium geographic raster provider crops level 0/1 wind tiles with pre
     assert.equal(tile.getContext('2d').imageSmoothingEnabled, true);
     assert.deepEqual(tile.crop, crop);
     const offset = (cell[1] * 720 + cell[0]) * 4;
-    assert.deepEqual(tile.getContext('2d').getImageData(64, 64).data, raster.rgba.slice(offset, offset + 4));
+    assert.deepEqual(
+      tile.getContext('2d').getImageData(64, 64).data,
+      raster.rgba.slice(offset, offset + 4),
+    );
   }
 });
