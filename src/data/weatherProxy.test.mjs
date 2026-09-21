@@ -589,7 +589,7 @@ test('tile LRU enforces both 128 entries and a 16 MiB byte budget', async () => 
   }
 });
 
-test('eight upstream slots and a 32-entry queue bound concurrent unique tile work', async () => {
+test('eight upstream slots and a 96-entry queue bound concurrent unique tile work', async () => {
   const waiting = [];
   let active = 0;
   let peak = 0;
@@ -604,15 +604,15 @@ test('eight upstream slots and a 32-entry queue bound concurrent unique tile wor
     },
   });
   await request('/manifest?product=radar');
-  const requests = Array.from({ length: 40 }, (_, x) =>
+  const requests = Array.from({ length: 104 }, (_, x) =>
     request(tile({ z: 6, x })),
   );
   await nextTurn();
   assert.equal(active, 8);
-  const overflow = await request(tile({ z: 6, x: 40 }));
+  const overflow = await request(tile({ z: 6, x: 104 }));
   assert.equal(overflow.statusCode, 429);
   assert.equal(overflow.headers['Retry-After'], '2');
-  for (let batch = 0; batch < 5; batch++) {
+  for (let batch = 0; batch < 13; batch++) {
     waiting.splice(0).forEach((resolve) => resolve());
     await nextTurn();
   }

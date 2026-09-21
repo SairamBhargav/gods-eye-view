@@ -157,8 +157,14 @@ export function createWeatherRendering({
             if (!frame.closed) viewer.scene.requestRender();
           });
       };
-      frame.offError = provider.errorEvent.addEventListener(() => {
+      frame.offError = provider.errorEvent.addEventListener((error) => {
         if (frame.closed) return;
+        const status = error?.error?.statusCode;
+        // Cesium retries synchronously after this event; no delay hook is exposed.
+        if ((status === 429 || status === 503) && error.timesRetried < 3) {
+          error.retry = true;
+          return;
+        }
         frame.failed = true;
         lastError = 'Some weather tiles unavailable';
         onChange();

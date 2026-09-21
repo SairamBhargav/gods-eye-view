@@ -233,7 +233,7 @@ export function weatherProxy({
       operation = null;
     }
     if (!operation) {
-      if (operations.size >= 40 || pending.length >= 32)
+      if (operations.size >= 120 || pending.length >= 96)
         throw failure('weather_busy', 429);
       const controller = new AbortController();
       operation = { controller, work, waiters: 0, started: false };

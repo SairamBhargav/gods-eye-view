@@ -849,6 +849,53 @@ for (const product of ['clouds', 'clouds-regional', 'radar', 'lightning']) {
   });
 }
 
+for (const statusCode of [429, 503]) {
+  test(`${statusCode} retries up to three times without failing a healthy frame`, async () => {
+    let now = 0;
+    const h = renderingHarness({ now: () => now });
+    h.viewer.scene.globe.tilesLoaded = false;
+    const stage = h.rendering.setFrame(snapshot, times[0]);
+    h.providers[0].response = deferred();
+    const rejected = h.providers[0].requestImage(0, 0, 0, {});
+    h.providers[0].response.reject(new Error('throttled'));
+    await assert.rejects(rejected, /throttled/);
+    for (let timesRetried = 0; timesRetried < 3; timesRetried++) {
+      const error = { error: { statusCode }, timesRetried, retry: false };
+      h.providers[0].errorEvent.emit(error);
+      assert.equal(error.retry, true);
+      assert.equal(h.rendering.getDiagnostics().error, null);
+    }
+    h.settle();
+    assert.equal(h.rendering.getDiagnostics().loading, true);
+    h.providers[0].response = deferred();
+    const retried = h.providers[0].requestImage(0, 0, 0, {});
+    h.providers[0].response.resolve({});
+    await retried;
+    now = 250;
+    h.settle();
+    assert.equal(await stage, true);
+    const exhausted = h.rendering.setFrame(snapshot, times[1]);
+    const error = { error: { statusCode }, timesRetried: 3, retry: false };
+    h.providers[1].errorEvent.emit(error);
+    h.settle();
+    assert.equal(error.retry, false);
+    assert.equal(await exhausted, false);
+    assert.equal(h.rendering.getDiagnostics().time, times[0]);
+    h.rendering.clear();
+  });
+}
+
+test('404 fails a frame without retry', async () => {
+  const h = renderingHarness();
+  const stage = h.rendering.setFrame(snapshot, times[0]);
+  const error = { error: { statusCode: 404 }, timesRetried: 0, retry: false };
+  h.providers[0].errorEvent.emit(error);
+  h.settle();
+  assert.equal(error.retry, false);
+  assert.equal(await stage, false);
+  h.rendering.clear();
+});
+
 test('no host pauses history, refreshes metadata, and restores retained time and playback', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let refreshes = 0;
