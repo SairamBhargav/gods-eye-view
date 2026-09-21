@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWeatherRendering } from './rendering.js';
 import { createWeatherLayer } from './index.js';
+import { Color, ImageryLayerCollection, GeographicTilingScheme } from 'cesium';
+import { NO_IMAGERY_HOST } from './imageryHost.js';
+import { orderWeatherImagery } from './imageryOrder.js';
 
 const times = [
   '2026-09-15T20:00:00.000Z',
@@ -70,6 +73,7 @@ function renderingHarness(options = {}) {
   class Provider {
     constructor(options) {
       this.options = options;
+      this.tilingScheme = new GeographicTilingScheme();
       this.errorEvent = event();
       this.response = null;
       providers.push(this);
@@ -79,6 +83,10 @@ function renderingHarness(options = {}) {
     }
   }
   const collection = {
+    add(layer) {
+      layers.push(layer);
+      return layer;
+    },
     addImageryProvider(provider) {
       const layer = { imageryProvider: provider, alpha: 1, show: true };
       layers.push(layer);
@@ -122,6 +130,7 @@ function renderingHarness(options = {}) {
     },
   };
   const cesium = {
+    Color,
     UrlTemplateImageryProvider: Provider,
     GeographicTilingScheme: class {
       constructor(options) {
@@ -374,7 +383,12 @@ test('failed and timed-out stages retain the previous observation; a healthy rep
   h.rendering.clear();
 });
 
-function layerHarness({ reducedMotion = false, feed, id } = {}) {
+function layerHarness({
+  reducedMotion = false,
+  feed,
+  id,
+  eventTarget = target(),
+} = {}) {
   const stages = [];
   const motion = target({ matches: reducedMotion });
   const documentRef = target({ hidden: false });
@@ -383,6 +397,9 @@ function layerHarness({ reducedMotion = false, feed, id } = {}) {
   let active = null;
   let clearCount = 0;
   const rendering = {
+    rehome() {
+      active?.finish(false);
+    },
     setAlpha() {},
     setFrame(value, selected, { signal } = {}) {
       if (active) active.finish(false);
@@ -419,6 +436,7 @@ function layerHarness({ reducedMotion = false, feed, id } = {}) {
     id,
     feed: feed ?? { getSnapshot: async () => snapshot },
     documentRef,
+    eventTarget,
     matchMedia: () => motion,
     createRendering: () => rendering,
   });
@@ -427,6 +445,7 @@ function layerHarness({ reducedMotion = false, feed, id } = {}) {
   return {
     layer,
     stages,
+    eventTarget,
     motion,
     documentRef,
     moveEnd,
@@ -736,5 +755,155 @@ test('history loading updates an existing info line and preserves summary status
   const ready = h.layer.getRowControls();
   assert.equal(ready.info.split('\n').length, loading.info.split('\n').length);
   assert.doesNotMatch(ready.info, / · loading/);
+  h.layer.destroy();
+});
+
+test('tileset frames require own loaded tiles and rehome cancels staging while preserving order', async () => {
+  let now = 0;
+  const tiles = new ImageryLayerCollection();
+  let host = { collection: tiles, kind: 'tileset' };
+  const h = renderingHarness({ getHost: () => host, now: () => now });
+  const stage = h.rendering.setFrame(snapshot, times[0]);
+  assert.equal(h.layers.length, 0);
+  assert.equal(tiles.length, 1);
+  h.settle();
+  assert.equal(
+    h.rendering.getDiagnostics().time,
+    null,
+    'hidden globe readiness cannot admit tileset imagery',
+  );
+  const provider = h.providers[0];
+  provider.response = deferred();
+  const tile = provider.requestImage(0, 0, 0, {});
+  provider.response.resolve({});
+  await tile;
+  now = 250;
+  h.settle();
+  assert.equal(await stage, true);
+  const radar = tiles.get(0);
+  const cloud = h.viewer.imageryLayers.add({ name: 'cloud' });
+  const lightning = h.viewer.imageryLayers.add({ name: 'lightning' });
+  orderWeatherImagery(h.viewer.imageryLayers, lightning, 3);
+  orderWeatherImagery(h.viewer.imageryLayers, cloud, 1);
+  const incoming = h.rendering.setFrame(snapshot, times[1]);
+  host = { collection: h.viewer.imageryLayers, kind: 'globe' };
+  assert.equal(h.rendering.rehome(), true);
+  assert.equal(await incoming, false);
+  assert.equal(tiles.length, 0);
+  assert.deepEqual(h.layers, [cloud, radar, lightning]);
+  assert.equal(h.rendering.getDiagnostics().time, times[0]);
+  assert.equal(radar.isDestroyed(), false);
+  host = { collection: null, kind: 'none' };
+  h.rendering.rehome();
+  assert.deepEqual(h.layers, [cloud, lightning]);
+  assert.equal(await h.rendering.setFrame(snapshot, times[2]), false);
+  assert.equal(h.providers.length, 2);
+  assert.equal(h.rendering.getDiagnostics().error, NO_IMAGERY_HOST);
+  host = { collection: tiles, kind: 'tileset' };
+  h.rendering.rehome();
+  assert.equal(tiles.get(0), radar);
+  assert.equal(h.rendering.getDiagnostics().error, null);
+  h.rendering.clear();
+  assert.equal(tiles.length, 0);
+  assert.equal(radar.isDestroyed(), true);
+});
+
+test('a stage without a current frame is cancelled on host change and detached frames are destroyed', async () => {
+  const tiles = new ImageryLayerCollection();
+  let host = { collection: tiles, kind: 'tileset' };
+  const h = renderingHarness({ getHost: () => host });
+  const first = h.rendering.setFrame(snapshot, times[0]);
+  host = { collection: h.viewer.imageryLayers, kind: 'globe' };
+  h.rendering.rehome();
+  assert.equal(await first, false);
+  assert.equal(tiles.length, 0);
+  const ready = h.rendering.setFrame(snapshot, times[1]);
+  h.settle();
+  await ready;
+  const layer = h.layers[0];
+  let destroyed = false;
+  layer.destroy = () => {
+    destroyed = true;
+  };
+  host = { collection: null, kind: 'none' };
+  h.rendering.rehome();
+  h.rendering.clear();
+  assert.equal(destroyed, true);
+});
+
+for (const product of ['clouds', 'clouds-regional', 'radar', 'lightning']) {
+  test(`${product} applies infrared transparency only where appropriate on either host`, async () => {
+    for (const kind of ['globe', 'tileset']) {
+      const collection = new ImageryLayerCollection();
+      const h = renderingHarness({ getHost: () => ({ collection, kind }) });
+      const stage = h.rendering.setFrame({ ...snapshot, product }, times[0]);
+      const layer = collection.get(0);
+      if (product.startsWith('clouds')) {
+        assert.deepEqual(layer.colorToAlpha, new Color(0, 0, 0, 1));
+        assert.equal(layer.colorToAlphaThreshold, 0.55);
+      } else assert.equal(layer.colorToAlpha, undefined);
+      assert.equal(layer.alpha, 0);
+      h.rendering.clear();
+      assert.equal(await stage, false);
+    }
+  });
+}
+
+test('no host pauses history, refreshes metadata, and restores retained time and playback', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let refreshes = 0;
+  const h = layerHarness({
+    feed: {
+      getSnapshot: async () => {
+        refreshes++;
+        return snapshot;
+      },
+    },
+  });
+  let host = { collection: {}, kind: 'tileset' };
+  h.layer.attachShellServices({ imageryHost: () => host });
+  const update = h.layer.update();
+  await flush();
+  h.stages[0].finish();
+  await update;
+  h.layer.setParams({ play: true });
+  t.mock.timers.tick(2000);
+  assert.equal(h.stages.length, 2);
+  host = { collection: null, kind: 'none' };
+  h.eventTarget.emit('gev:map-stack-changed');
+  await flush();
+  assert.equal(h.layer.getDiagnostics().playing, false);
+  assert.equal(h.layer.getDiagnostics().timerActive, false);
+  assert.equal(h.layer.getRowControls().summary.status, NO_IMAGERY_HOST);
+  assert.equal(h.layer.getRowControls().info, NO_IMAGERY_HOST);
+  await h.layer.update();
+  assert.equal(refreshes, 2);
+  t.mock.timers.tick(10_000);
+  assert.equal(h.stages.length, 2);
+  assert.equal(h.layer.getDiagnostics().time, times[2]);
+  host = { collection: {}, kind: 'globe' };
+  h.eventTarget.emit('gev:map-stack-changed');
+  assert.equal(h.layer.getDiagnostics().playing, true);
+  assert.equal(h.layer.getDiagnostics().timerActive, true);
+  t.mock.timers.tick(2000);
+  assert.equal(h.stages.length, 3);
+  assert.equal(h.stages[2].time, times[0]);
+  h.layer.destroy();
+  assert.equal(h.eventTarget.size, 0);
+});
+
+test('host restore through update stages latest after a no-host start', async () => {
+  const h = layerHarness();
+  let host = { collection: null, kind: 'none' };
+  h.layer.attachShellServices({ imageryHost: () => host });
+  await h.layer.update();
+  assert.equal(h.stages.length, 0);
+  host = { collection: {}, kind: 'tileset' };
+  const update = h.layer.update();
+  await flush();
+  assert.equal(h.stages[0].time, snapshot.latest);
+  h.stages[0].finish();
+  await update;
+  assert.notEqual(h.layer.getRowControls().summary.status, NO_IMAGERY_HOST);
   h.layer.destroy();
 });

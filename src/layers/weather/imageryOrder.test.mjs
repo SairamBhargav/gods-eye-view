@@ -33,3 +33,18 @@ test('weather compositing remains consistent when scalar, observation and histor
   orderWeatherImagery(collection, next, 2);
   assert.deepEqual(items, [base, wind, cloud, radar, next, lightning]);
 });
+
+test('tileset imagery collection preserves scalar, infrared, radar and lightning order', async () => {
+  const { ImageryLayerCollection, ImageryLayer } = await import('cesium');
+  const tileset = { imageryLayers: new ImageryLayerCollection() };
+  const layers = Array.from({ length: 4 }, () => new ImageryLayer());
+  for (const priority of [3, 2, 0, 1]) {
+    tileset.imageryLayers.add(layers[priority]);
+    orderWeatherImagery(tileset.imageryLayers, layers[priority], priority);
+  }
+  assert.deepEqual(
+    layers.map((_, i) => tileset.imageryLayers.get(i)),
+    layers,
+  );
+  tileset.imageryLayers.destroy();
+});

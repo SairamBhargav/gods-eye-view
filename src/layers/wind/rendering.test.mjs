@@ -26,6 +26,8 @@ function harness({
   projected = null,
   createGpuRendering,
   onStatusChange,
+  getHost,
+  eventTarget,
 } = {}) {
   const strokes = [];
   const clears = [];
@@ -196,6 +198,8 @@ function harness({
     getViewer: () => viewer,
     createGpuRendering,
     onStatusChange,
+    getHost,
+    eventTarget,
   });
   return {
     rendering,
@@ -468,16 +472,16 @@ for (const overlay of ['speed', 'pressure', 'temperature']) {
     assert.equal(layer.alpha, 0, 'reinstall at low height starts transparent');
     assert.equal(layer.show, false, 'reinstall at low height starts hidden');
 
-    for (const eventName of ['changed', 'moveEnd']) {
+    for (const eventName of ['preRender', 'moveEnd']) {
       camera.positionCartographic.height = 1200;
       h.preRender.emit();
       assert.equal(h.pending.size, 0, 'street-level flow is parked');
       camera.positionCartographic.height = 1_200_000;
-      camera[eventName].emit();
+      (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
       assert.equal(layer.alpha, baseAlpha, 'camera event restores full alpha');
       assert.equal(layer.show, true, 'camera event unhides imagery without preRender');
       camera.positionCartographic.height = 200_000;
-      camera[eventName].emit();
+      (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
       assert.equal(layer.alpha, 0, 'lower bound is transparent');
       assert.equal(layer.show, false);
     }
@@ -856,7 +860,7 @@ for (const [label, change] of Object.entries({
   });
 }
 
-for (const eventName of ['changed', 'moveEnd']) {
+for (const eventName of ['preRender', 'moveEnd']) {
   test(`GPU height suspension resumes from camera ${eventName} without preRender`, () => {
     const times = [];
     let visible = false;
@@ -889,11 +893,12 @@ for (const eventName of ['changed', 'moveEnd']) {
     assert.equal(h.pending.size, 0);
     assert.equal(renders, 0);
     assert.equal(times.length, 0);
-    assert.equal(camera.percentageChanged, 0.01);
+    assert.equal(camera.percentageChanged, 0.5);
+    assert.equal(camera.changed.size, 0);
 
     camera.positionCartographic.height = 60000;
-    camera[eventName].emit();
-    assert.equal(renders, 1, 'camera event requests a single wake render');
+    (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
+    assert.equal(renders, eventName === 'preRender' ? 0 : 1, 'moveEnd wakes the parked scene');
     assert.equal(h.pending.size, 1);
     h.callbacks.shift()(16);
     assert.equal(times.length, 1);
@@ -908,7 +913,7 @@ for (const eventName of ['changed', 'moveEnd']) {
     assert.equal(times.length, 1, 'parked draw cannot tick or advance phase');
 
     camera.positionCartographic.height = 60000;
-    camera[eventName].emit();
+    (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
     h.callbacks.shift()(200000);
     assert.ok(
       times.at(-1) - phase < 0.1,
@@ -919,12 +924,12 @@ for (const eventName of ['changed', 'moveEnd']) {
     assert.equal(h.pending.size, 0, 'frustum-hidden cells also park');
     inFrustum = true;
     h.rendering.setOptions({ paused: true });
-    camera[eventName].emit();
+    (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
     assert.equal(h.pending.size, 0, 'camera events respect pause');
     h.rendering.setOptions({ paused: false });
     globalThis.document.hidden = true;
     h.visibility.emit();
-    camera[eventName].emit();
+    (eventName === 'preRender' ? h.preRender : camera.moveEnd).emit();
     assert.equal(h.pending.size, 0, 'camera events respect hidden documents');
     globalThis.document.hidden = false;
     h.visibility.emit();
@@ -936,3 +941,57 @@ for (const eventName of ['changed', 'moveEnd']) {
     assert.equal(camera.percentageChanged, 0.5);
   });
 }
+
+
+test('scalar host falls back to globe and rehomes the retained imagery through map events', () => {
+  const eventTarget = new EventTarget();
+  let host;
+  const h = harness({ eventTarget, getHost: () => host ?? { collection: h.viewer.imageryLayers, kind: 'globe' } });
+  h.rendering.attach();
+  h.rendering.setOptions({ overlay: 'speed' });
+  h.rendering.setField(FIELD);
+  h.rendering.start();
+  const original = h.imagery[0];
+  assert.ok(original);
+  const items = [];
+  const collection = {
+    add(layer) { items.push(layer); },
+    remove(layer, destroy) { items.splice(items.indexOf(layer), 1); if (destroy) layer.destroyed = true; },
+    get length() { return items.length; },
+    get: i => items[i],
+    raiseToTop(layer) { items.push(...items.splice(items.indexOf(layer), 1)); },
+  };
+  host = { collection, kind: 'tileset' };
+  eventTarget.dispatchEvent(new Event('gev:map-stack-changed'));
+  assert.equal(h.imagery.length, 0);
+  assert.deepEqual(items, [original]);
+  assert.equal(h.textures.length, 1, 'rehome reuses the scalar texture');
+  host = { collection: null, kind: 'none' };
+  eventTarget.dispatchEvent(new Event('gev:map-stack-changed'));
+  assert.equal(items.length, 0);
+  assert.equal(h.rendering.getDiagnostics().imageryError, 'Hidden by this map source · choose a globe map');
+  host = { collection, kind: 'tileset' };
+  h.rendering.rehome();
+  assert.deepEqual(items, [original]);
+  assert.equal(h.rendering.getDiagnostics().imageryError, null);
+  h.rendering.destroy();
+  assert.equal(original.destroyed, true);
+  eventTarget.dispatchEvent(new Event('gev:map-stack-changed'));
+  assert.equal(items.length, 0);
+});
+
+test('scalar installation with no host reports hidden and installs on restore', () => {
+  let host = { collection: null, kind: 'none' };
+  const h = harness({ getHost: () => host });
+  h.rendering.attach();
+  h.rendering.setOptions({ overlay: 'speed' });
+  h.rendering.setField(FIELD);
+  assert.equal(h.imagery.length, 0);
+  assert.equal(h.textures.length, 0);
+  assert.equal(h.rendering.getDiagnostics().imageryError, 'Hidden by this map source · choose a globe map');
+  host = { collection: h.viewer.imageryLayers, kind: 'globe' };
+  h.rendering.rehome();
+  assert.equal(h.imagery.length, 1);
+  assert.equal(h.rendering.getDiagnostics().imageryError, null);
+  h.rendering.destroy();
+});

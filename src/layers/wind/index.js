@@ -41,6 +41,7 @@ export function createWindLayer({
   let request = null;
   let enabled = false;
   let rendering = null;
+  let imageryHost = null;
   let manifest = null;
   let error = null;
   let loading = false;
@@ -71,6 +72,11 @@ export function createWindLayer({
         cesium,
         container: container ?? nextViewer.container,
         getViewer: () => viewer,
+        getHost: () =>
+          imageryHost?.() ?? {
+            collection: viewer.imageryLayers ?? viewer.scene?.imageryLayers,
+            kind: 'globe',
+          },
         onStatusChange: notify,
       });
       rendering.attach();
@@ -86,6 +92,13 @@ export function createWindLayer({
         viewer,
         cesium,
       });
+    },
+    attachShellServices(services) {
+      imageryHost =
+        typeof services?.imageryHost === 'function'
+          ? services.imageryHost
+          : null;
+      rendering?.rehome?.();
     },
     enable() {
       enabled = true;
@@ -107,6 +120,7 @@ export function createWindLayer({
     },
     async update(nextViewer, { signal } = {}) {
       if (!enabled) return false;
+      rendering?.rehome?.();
       request?.abort();
       const controller = new AbortController();
       if (signal?.aborted) controller.abort(signal.reason);
@@ -346,6 +360,7 @@ export function createWindLayer({
       layer.disable();
       rendering?.destroy();
       rendering = null;
+      imageryHost = null;
       viewer = null;
       rowControlsListener = null;
       inspectionMarker?.destroy();

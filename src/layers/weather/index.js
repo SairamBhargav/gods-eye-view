@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium';
 import { createWeatherRendering } from './rendering.js';
+import { NO_IMAGERY_HOST } from './imageryHost.js';
 
 const STOPS = [
   [10, '#00ecec'],
@@ -32,6 +33,7 @@ export function createWeatherLayer({
   cesium = Cesium,
   createRendering = createWeatherRendering,
   documentRef = globalThis.document,
+  eventTarget = globalThis.window,
   matchMedia = globalThis.matchMedia?.bind(globalThis),
 } = {}) {
   if (typeof feed?.getSnapshot !== 'function')
@@ -56,6 +58,11 @@ export function createWeatherLayer({
     removeCamera = null;
   let motion = null;
   let runNavigation = null;
+  let imageryHost = null;
+  let hostCollection;
+  let hostHidden = false;
+  const getHost = () =>
+    imageryHost?.() ?? { collection: viewer?.imageryLayers, kind: 'globe' };
   const notify = () => listener?.();
   const shownTime = () => rendering?.getDiagnostics().time;
   const observationDelayed = () =>
@@ -67,11 +74,37 @@ export function createWeatherLayer({
     clearTimeout(timer);
     timer = null;
   };
-  const suspended = () => documentRef?.hidden || motion?.matches;
+  const suspended = () => hostHidden || documentRef?.hidden || motion?.matches;
   const onVisibility = () => {
     if (suspended()) stop();
     notify();
   };
+
+  function checkHost(resume = true) {
+    const host = getHost();
+    const changed =
+      host.collection !== hostCollection ||
+      hostHidden !== (host.kind === 'none');
+    hostCollection = host.collection;
+    hostHidden = host.kind === 'none';
+    // Keep playback intent and the displayed time while the host is unavailable.
+    if (!changed || !rendering) return;
+    ++generation;
+    rendering.rehome?.();
+    clearTimeout(timer);
+    timer = null;
+    loading = Boolean(request && !request.signal.aborted);
+    if (resume && enabled && !hostHidden && manifest) {
+      const time =
+        followLatest || !manifest.times.includes(shownTime())
+          ? manifest.latest
+          : shownTime();
+      if (time !== shownTime()) void show(time);
+      else schedule();
+    }
+    notify();
+  }
+  const onMapStackChanged = () => checkHost();
 
   function schedule() {
     clearTimeout(timer);
@@ -86,7 +119,9 @@ export function createWeatherLayer({
     }, 2000);
   }
   async function show(time, signal) {
-    if (!enabled || !manifest?.times?.includes(time)) return false;
+    checkHost(false);
+    if (!enabled || hostHidden || !manifest?.times?.includes(time))
+      return false;
     const owner = ++generation;
     loading = true;
     notify();
@@ -122,7 +157,17 @@ export function createWeatherLayer({
     updateInterval: lightning ? 600_000 : 120_000,
     init(nextViewer) {
       viewer = nextViewer;
-      rendering = createRendering({ viewer, cesium, onChange: notify });
+      rendering = createRendering({
+        viewer,
+        cesium,
+        getHost,
+        onChange: notify,
+      });
+      checkHost(false);
+      eventTarget?.addEventListener?.(
+        'gev:map-stack-changed',
+        onMapStackChanged,
+      );
       rendering.setAlpha(opacity === 'light' ? 0.4 : satellite ? 0.7 : 0.8);
       motion = matchMedia?.('(prefers-reduced-motion: reduce)');
       motion?.addEventListener?.('change', onVisibility);
@@ -132,6 +177,11 @@ export function createWeatherLayer({
       });
     },
     attachShellServices(services) {
+      imageryHost =
+        typeof services?.imageryHost === 'function'
+          ? services.imageryHost
+          : null;
+      checkHost();
       runNavigation =
         typeof services?.runNavigation === 'function'
           ? services.runNavigation
@@ -155,6 +205,7 @@ export function createWeatherLayer({
     },
     async update(_viewer, { signal } = {}) {
       if (!enabled) return false;
+      checkHost(false);
       clearTimeout(timer);
       timer = null;
       request?.abort();
@@ -330,6 +381,7 @@ export function createWeatherLayer({
             ? `${followLatest ? 'Observed' : 'History'} · ${utc(time)} · ${lag}`
             : 'Waiting for observation',
           status:
+            (hostHidden ? NO_IMAGERY_HOST : null) ||
             error ||
             diagnostic?.error ||
             (observationDelayed()
@@ -362,23 +414,27 @@ export function createWeatherLayer({
           {
             id: 'previous',
             label: '‹ Earlier',
-            disabled: loading || index <= 0,
+            disabled: hostHidden || loading || index <= 0,
             params: { step: -1 },
             title: 'Previous observed frame',
           },
           {
             id: 'play',
-            label: playing ? 'Pause' : 'Play history',
-            active: playing,
+            label: playing && !hostHidden ? 'Pause' : 'Play history',
+            active: playing && !hostHidden,
             disabled:
-              (loading && !playing) || times.length < 2 || !!motion?.matches,
+              hostHidden ||
+              (loading && !playing) ||
+              times.length < 2 ||
+              !!motion?.matches,
             params: { play: true },
             title: 'Replay recent observations; this is not a forecast',
           },
           {
             id: 'next',
             label: 'Later ›',
-            disabled: loading || !current || index >= times.length - 1,
+            disabled:
+              hostHidden || loading || !current || index >= times.length - 1,
             params: { step: 1 },
             title: 'Next observed frame',
           },
@@ -386,7 +442,7 @@ export function createWeatherLayer({
             id: 'latest',
             label: 'Latest',
             active: followLatest,
-            disabled: !manifest,
+            disabled: hostHidden || !manifest,
             params: { latest: true },
             title: lightning
               ? 'Follow the newest observation; refresh every ten minutes'
@@ -420,12 +476,14 @@ export function createWeatherLayer({
                   : `${label} dBZ radar reflectivity`,
               }))
             : [],
-        info: `${radar ? 'RADAR REFLECTIVITY · dBZ' : lightning ? 'LIGHTNING DENSITY · 15 min accumulation' : product === 'clouds' ? 'GLOBAL INFRARED · hourly' : 'GOES INFRARED · ~5 min'}\n${time ? `${followLatest ? 'Latest observation' : 'History'}: ${utc(time)}\n${lag}${current && !followLatest ? ` · frame ${index + 1}/${times.length}` : ''}${loading ? ' · loading' : ''}` : `Observation: unavailable${loading ? ' · loading' : ''}`}${manifest?.stale ? '\nSTALE · cached source metadata' : ''}${error || diagnostic?.error ? '\n' + (error || diagnostic.error) : ''}\n${radar ? 'Contiguous US · gaps ≠ no rain' : lightning ? 'Americas + Pacific · not individual strikes\nColor: strikes/km²/min ×10³' : product === 'clouds' ? '60°S–60°N · typically 2–3 h delayed' : 'North America · clouds + surface temperature'}${outside ? '\nMap center is outside source coverage' : ''}${motion?.matches ? '\nReduced motion · manual history available' : ''}`,
+        info: hostHidden
+          ? NO_IMAGERY_HOST
+          : `${radar ? 'RADAR REFLECTIVITY · dBZ' : lightning ? 'LIGHTNING DENSITY · 15 min accumulation' : product === 'clouds' ? 'GLOBAL INFRARED · hourly' : 'GOES INFRARED · ~5 min'}\n${time ? `${followLatest ? 'Latest observation' : 'History'}: ${utc(time)}\n${lag}${current && !followLatest ? ` · frame ${index + 1}/${times.length}` : ''}${loading ? ' · loading' : ''}` : `Observation: unavailable${loading ? ' · loading' : ''}`}${manifest?.stale ? '\nSTALE · cached source metadata' : ''}${error || diagnostic?.error ? '\n' + (error || diagnostic.error) : ''}\n${radar ? 'Contiguous US · gaps ≠ no rain' : lightning ? 'Americas + Pacific · not individual strikes\nColor: strikes/km²/min ×10³' : product === 'clouds' ? '60°S–60°N · typically 2–3 h delayed' : 'North America · cold cloud tops'}${outside ? '\nMap center is outside source coverage' : ''}${motion?.matches ? '\nReduced motion · manual history available' : ''}`,
         infoTitle: lightning
           ? 'NOAA/NWS 15-minute lightning density derived from Vaisala NLDN/GLD360. Coverage 110°E across the Pacific/Americas to 0°, 25°S–80°N. Not a live strike count, global coverage or a safety warning.'
           : radar
             ? 'NOAA MRMS radar echoes indicate precipitation patterns, not rain rate, a storm warning or a future forecast. Native source approximately 1 km; display is limited to level 6. Frames use exact advertised observation times.'
-            : 'Infrared satellite imagery reveals cloud and land/sea temperature patterns. Bright regions are generally colder, often higher cloud tops. This is an observed image draped on the globe, not measured cloud volume. Global mosaic coverage and freshness differ from regional GOES.',
+            : 'Warm clear-sky pixels are drawn transparent and cold cloud tops are shown. This is observed infrared imagery, not measured cloud volume. Global mosaic coverage and freshness differ from regional GOES.',
       };
     },
     setRowControlsListener(value) {
@@ -446,7 +504,7 @@ export function createWeatherLayer({
     getDiagnostics() {
       return {
         ...rendering?.getDiagnostics(),
-        playing,
+        playing: playing && !hostHidden,
         followLatest,
         historyFrames: manifest?.times?.length || 0,
         timerActive: timer !== null,
@@ -458,7 +516,12 @@ export function createWeatherLayer({
       removeCamera = null;
       motion?.removeEventListener?.('change', onVisibility);
       documentRef?.removeEventListener?.('visibilitychange', onVisibility);
+      eventTarget?.removeEventListener?.(
+        'gev:map-stack-changed',
+        onMapStackChanged,
+      );
       runNavigation = null;
+      imageryHost = null;
       viewer = null;
       rendering = null;
       listener = null;

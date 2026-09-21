@@ -14,8 +14,8 @@ advance forecast time.
 Temperature is air temperature at 2 m in °C; pressure is mean sea-level pressure
 in hPa. Optional companion fields come from the same model run/forecast as the
 wind. A missing or invalid companion leaves usable wind visible and identifies
-the selected field as unavailable. The color texture drapes the globe basemap;
-photorealistic 3D tiles may cover it. With GPU rendering, the color field fades out
+the selected field as unavailable. The color texture drapes the globe basemap or
+the active photorealistic 3D Tiles. With GPU rendering, the color field fades out
 below ~1,200 km camera height and is hidden at or below 200 km.
 GPU wind curves follow the sampled forecast field. Their 12 km display lift is a
 rendering aid; the source remains 10 m wind,
@@ -44,6 +44,10 @@ catalog construction owns each instance.
 
 Wind animates one forecast without advancing forecast time. Separate Weather
 observation layers provide radar and satellite history; none claims measured cloud volume.
+Weather imagery drapes onto the active globe or photorealistic 3D Tiles, retaining
+its observation when the map source changes. A map without an imagery host pauses
+history while metadata refresh continues, then resumes when a host returns.
+Infrared draws warm clear-sky pixels transparent and shows cold cloud tops.
 Mapped.earth's public bundles informed the rendering study; no code or assets
 were reused, and the study found no application licence granting reuse. Native
 hardware GPU behavior remains unverified; software-rendered checks do not

@@ -2,6 +2,9 @@
 
 ## Unreleased — weather review
 
+- Drape weather imagery and wind color fields onto photorealistic 3D Tiles.
+- Show infrared cloud tops only, with warm clear-sky pixels drawn transparent.
+
 - Cull regional wind batches per frame, fade curves below 60 km, and stop idle
   rendering when no curve is visible.
 - Fade the wind color field below ~1,200 km camera height and hide it at 200 km.

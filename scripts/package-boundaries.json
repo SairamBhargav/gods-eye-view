@@ -589,6 +589,7 @@
       "src/data/feedState.js",
       "src/data/layerSnapshot.js",
       "src/ui/aircraftDisplay.js",
+      "src/layers/weather/imageryHost.js",
       "src/ui/layerBindings.js",
       "src/ui/displayBindings.js",
       "src/ui/shellFacade.js"
@@ -1847,6 +1848,7 @@
       "src/scenes/sharing.js",
       "src/ui/sceneSharing.js",
       "src/layers/weather/imageryOrder.js",
+      "src/layers/weather/imageryHost.js",
       "src/layers/cyclones/index.js",
       "src/layers/cyclones/rendering.js",
       "src/layers/cyclones/source.js"
@@ -2261,6 +2263,7 @@
       "src/layers/weather/rendering.js",
       "src/layers/weather/source.js",
       "src/layers/weather/imageryOrder.js",
+      "src/layers/weather/imageryHost.js",
       "src/layers/cyclones/index.js",
       "src/layers/cyclones/rendering.js",
       "src/layers/cyclones/source.js"

@@ -122,6 +122,7 @@ export class LayerBindings {
       layer.attachShellServices?.(null);
     this._weatherShellModules = [];
     for (const id of [
+      'wind',
       'weather-radar',
       'weather-satellite',
       'weather-lightning',
@@ -132,6 +133,7 @@ export class LayerBindings {
       layer.attachShellServices({
         runNavigation: (navigate) =>
           this.runImmediateNavigation('weather', navigate),
+        imageryHost: this.services.imageryHost,
       });
       this._weatherShellModules.push(layer);
     }

@@ -246,8 +246,8 @@ services: `https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows` a
   Coverage gaps do not mean no precipitation. The numeric legend follows NOAA's
   `weather_radar_base_reflectivity` style.
 - `goes_longwave_imagery`: GOES-19/18 Band 14, approximately 2 km, 5-minute updates,
-  regional North America. Infrared includes clouds and land/sea temperatures;
-  it is not a cloud-only mask or measured cloud volume.
+  regional North America. Infrared draws warm clear-sky pixels transparent and
+  shows cold cloud tops; it is not measured cloud volume.
 - `global_longwave_imagery_mosaic`: approximately 3 km, hourly, nominal 60°S–60°N
   coverage and typically 2–3-hour latency. It is slower global context.
 

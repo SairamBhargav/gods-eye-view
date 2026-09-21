@@ -1,16 +1,19 @@
 import { weatherTileUrl, weatherImageUrl } from './source.js';
 import { orderWeatherImagery } from './imageryOrder.js';
+import { NO_IMAGERY_HOST } from './imageryHost.js';
+
+const INFRARED_COLOR_TO_ALPHA_THRESHOLD = 0.55;
 
 /** Own at most a displayed and a staging frame. Use native Cesium tile scheduling,
  * projection and texture disposal; the application clock is never touched. */
 export function createWeatherRendering({
   viewer,
   cesium,
+  getHost = () => ({ collection: viewer.imageryLayers, kind: 'globe' }),
   onChange = () => {},
   timeoutMs = 25_000,
   now = () => performance.now(),
 }) {
-  const collection = viewer.imageryLayers;
   let current = null;
   let incoming = null;
   let alpha = 0.7;
@@ -26,8 +29,14 @@ export function createWeatherRendering({
     clearTimeout(frame.timeout);
     for (const request of frame.requests) request.cancel?.();
     frame.requests.clear();
-    if (!collection.isDestroyed?.() && collection.contains(frame.layer))
+    const collection = frame.collection;
+    if (
+      collection &&
+      !collection.isDestroyed?.() &&
+      collection.contains(frame.layer)
+    )
       collection.remove(frame.layer, true);
+    else if (!frame.layer.isDestroyed?.()) frame.layer.destroy?.();
   }
   function cancelIncoming() {
     if (!incoming) return;
@@ -36,10 +45,32 @@ export function createWeatherRendering({
     remove(previous);
     previous.resolve(false);
   }
+  function rehome() {
+    const { collection } = getHost();
+    const changed =
+      (current && current.collection !== collection) ||
+      (incoming && incoming.collection !== collection);
+    if (!changed) return false;
+    cancelIncoming();
+    if (current && current.collection !== collection) {
+      current.collection?.remove(current.layer, false);
+      current.collection = collection;
+      if (collection) {
+        collection.add(current.layer);
+        orderWeatherImagery(collection, current.layer, current.priority);
+      }
+    }
+    viewer.scene.requestRender();
+    return true;
+  }
   return {
+    rehome,
     async setFrame(snapshot, time, { signal } = {}) {
       signal?.throwIfAborted();
+      rehome();
       cancelIncoming();
+      const { collection, kind } = getHost();
+      if (kind === 'none') return false;
       if (current?.time === time && current.product === snapshot.product)
         return true;
       lastError = null;
@@ -80,6 +111,14 @@ export function createWeatherRendering({
       });
       const frame = {
         time,
+        collection,
+        kind,
+        priority:
+          snapshot.product === 'lightning'
+            ? 3
+            : snapshot.product === 'radar'
+              ? 2
+              : 1,
         product: snapshot.product,
         requests: new Set(),
         deferred: new Set(),
@@ -127,16 +166,15 @@ export function createWeatherRendering({
       // A shown, transparent layer lets Cesium request staging tiles while the last
       // complete observation stays visible underneath it.
       frame.layer = collection.addImageryProvider(provider);
+      if (
+        snapshot.product === 'clouds' ||
+        snapshot.product === 'clouds-regional'
+      ) {
+        frame.layer.colorToAlpha = new cesium.Color(0, 0, 0, 1);
+        frame.layer.colorToAlphaThreshold = INFRARED_COLOR_TO_ALPHA_THRESHOLD;
+      }
       frame.layer.alpha = 0;
-      orderWeatherImagery(
-        collection,
-        frame.layer,
-        snapshot.product === 'lightning'
-          ? 3
-          : snapshot.product === 'radar'
-            ? 2
-            : 1,
-      );
+      orderWeatherImagery(collection, frame.layer, frame.priority);
       incoming = frame;
       const result = new Promise((resolve) => {
         frame.resolve = resolve;
@@ -188,7 +226,8 @@ export function createWeatherRendering({
           frame.deferred.size === 0 &&
           now() - frame.lastActivity >= 200;
         if (
-          (viewer.scene.globe.tilesLoaded || ownReady) &&
+          ((frame.kind === 'globe' && viewer.scene.globe.tilesLoaded) ||
+            ownReady) &&
           frame.pending === 0
         ) {
           if (++settled >= 2) finish(true);
@@ -224,7 +263,7 @@ export function createWeatherRendering({
         deferredTiles: incoming?.deferred.size ?? 0,
         loadedTiles: (incoming || current)?.loaded ?? 0,
         frameLoadMs: current?.loadMs ?? null,
-        error: lastError,
+        error: getHost().kind === 'none' ? NO_IMAGERY_HOST : lastError,
       };
     },
   };

@@ -1,5 +1,6 @@
 import { createWindRelief } from './relief.js';
 import { orderWeatherImagery } from '../weather/imageryOrder.js';
+import { NO_IMAGERY_HOST } from '../weather/imageryHost.js';
 import { createWindGpuRendering } from './gpuRendering.js';
 import { advectParticle, sampleWind } from './model.js';
 import {
@@ -41,6 +42,12 @@ export function createWindRendering({
   cesium,
   container,
   getViewer,
+  getHost = () => ({
+    collection:
+      getViewer?.()?.imageryLayers ?? getViewer?.()?.scene?.imageryLayers,
+    kind: 'globe',
+  }),
+  eventTarget = globalThis.window,
   createGpuRendering = createWindGpuRendering,
   onStatusChange,
 } = {}) {
@@ -270,6 +277,7 @@ export function createWindRendering({
     imageryErrorRemove = null;
     if (imagery && imageryCollection && !imageryCollection.isDestroyed?.())
       imageryCollection.remove(imagery, true);
+    else if (imagery && !imagery.isDestroyed?.()) imagery.destroy?.();
     imagery = null;
     imageryCollection = null;
   }
@@ -294,12 +302,16 @@ export function createWindRendering({
     imageryError = null;
     const viewer = viewerReady();
     if (!snapshot || overlay === 'none' || !viewer) return;
+    const { collection, kind } = getHost();
+    if (kind === 'none') {
+      imageryError = NO_IMAGERY_HOST;
+      return;
+    }
     const raster = createFieldRaster(snapshot, overlay);
     if (!raster) {
       imageryError = `${overlay} field unavailable`;
       return;
     }
-    const collection = viewer.imageryLayers ?? viewer.scene?.imageryLayers;
     if (!collection || !cesium.SingleTileImageryProvider) {
       imageryError = 'Globe imagery unavailable';
       return;
@@ -333,6 +345,27 @@ export function createWindRendering({
       removeImagery();
       imageryError = 'Globe field image unavailable';
     }
+  }
+
+  function rehome() {
+    if (!snapshot || overlay === 'none') return;
+    const { collection, kind } = getHost();
+    if (imagery && collection !== imageryCollection) {
+      imageryCollection?.remove(imagery, false);
+      imageryCollection = collection;
+      if (collection) {
+        collection.add(imagery);
+        orderWeatherImagery(collection, imagery, 0);
+      }
+      viewerReady()?.scene?.requestRender?.();
+    }
+    const wasHidden = imageryError === NO_IMAGERY_HOST;
+    if (kind === 'none') imageryError = NO_IMAGERY_HOST;
+    else if (wasHidden) {
+      imageryError = null;
+      if (!imagery) installImagery();
+    }
+    if (wasHidden !== (imageryError === NO_IMAGERY_HOST)) onStatusChange?.();
   }
 
   /** No idle animation for pause/reduced motion; scene events repaint only changed views. */
@@ -425,19 +458,11 @@ export function createWindRendering({
     listen(media, 'change', motionChanged);
     listen(globalThis.document, 'visibilitychange', motionChanged);
     listen(globalThis, 'resize', cameraMoved);
+    listen(eventTarget, 'gev:map-stack-changed', rehome);
     const viewer = viewerReady();
     const camera = viewer?.scene?.camera;
     listenScene(viewer?.scene?.preRender, viewChanged);
-    listenScene(camera?.changed, cameraMoved);
     listenScene(camera?.moveEnd, cameraMoved);
-    if (camera) {
-      const previous = camera.percentageChanged;
-      camera.percentageChanged = 0.01;
-      removers.push(() => {
-        if (camera.percentageChanged === 0.01)
-          camera.percentageChanged = previous;
-      });
-    }
   }
   function detachListeners() {
     for (const remove of removers) remove();
@@ -585,6 +610,7 @@ export function createWindRendering({
   }
 
   return {
+    rehome,
     attach() {
       if (canvas) return;
       canvas = document.createElement('canvas');
@@ -655,6 +681,7 @@ export function createWindRendering({
       if (running || !canvas) return;
       running = true;
       attachListeners();
+      rehome();
       motionChanged();
     },
     stop() {

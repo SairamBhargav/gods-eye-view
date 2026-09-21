@@ -1,3 +1,4 @@
+import { resolveImageryHost } from '../layers/weather/imageryHost.js';
 import { ShellFacade } from './shellFacade.js';
 import { AircraftDisplay } from './aircraftDisplay.js';
 import { LayerBindings } from './layerBindings.js';
@@ -230,6 +231,11 @@ export class StyleManager extends ShellFacade {
     this._layerBindings = new LayerBindings({
       viewer,
       services: {
+        imageryHost: () =>
+          resolveImageryHost({
+            viewer,
+            tileset: mapStackController?.getImageryHostTileset?.(),
+          }),
         cachedGroundFloor: services.cachedGroundFloor,
         warmGroundFloor: services.warmGroundFloor,
         cctvLayer: services.cctvLayer,
