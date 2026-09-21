@@ -47,7 +47,8 @@ export function createRasterTileProvider({
         256,
         256,
       );
-      return tile;
+      // ImageryLayer consumes requestImage results as promises.
+      return Promise.resolve(tile);
     },
   };
 }

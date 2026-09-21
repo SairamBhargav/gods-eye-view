@@ -31,7 +31,7 @@ function createCanvas() {
   return canvas;
 }
 
-test('real Cesium geographic raster provider crops level 0/1 wind tiles with preserved pixels', () => {
+test('real Cesium geographic raster provider crops level 0/1 wind tiles with preserved pixels', async () => {
   const raster = createFieldRaster(
     {
       nx: 8,
@@ -76,7 +76,9 @@ test('real Cesium geographic raster provider crops level 0/1 wind tiles with pre
     [0, 0, 1, [0, 0, 180, 181, 0, 0, 256, 256], [45, 45]],
     [3, 1, 1, [540, 181, 180, 181, 0, 0, 256, 256], [585, 226]],
   ]) {
-    const tile = provider.requestImage(x, y, level);
+    const pending = provider.requestImage(x, y, level);
+    assert.ok(pending instanceof Promise, 'ImageryLayer consumes a promise');
+    const tile = await pending;
     assert.equal(tile.width, 256);
     assert.equal(tile.height, 256);
     assert.equal(tile.getContext('2d').imageSmoothingEnabled, true);
