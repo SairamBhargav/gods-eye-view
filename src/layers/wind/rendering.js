@@ -1,7 +1,10 @@
 import { createRasterTileProvider } from '../weather/rasterTiles.js';
 import { createWindRelief } from './relief.js';
 import { orderWeatherImagery } from '../weather/imageryOrder.js';
-import { NO_IMAGERY_HOST } from '../weather/imageryHost.js';
+import {
+  NO_IMAGERY_HOST,
+  WEATHER_TILESET_MIN_HEIGHT_METERS,
+} from '../weather/imageryHost.js';
 import { createWindGpuRendering } from './gpuRendering.js';
 import { advectParticle, sampleWind } from './model.js';
 import {
@@ -294,8 +297,9 @@ export function createWindRendering({
     )
       return;
     const height = camera.positionCartographic.height;
-    const fade =
-      height <= WIND_FIELD_FADE_LOW_METERS
+    const fade = !gpuActive
+      ? 1
+      : height <= WIND_FIELD_FADE_LOW_METERS
         ? 0
         : height >= WIND_FIELD_FADE_HIGH_METERS
           ? 1
@@ -304,11 +308,15 @@ export function createWindRendering({
     const baseAlpha = overlay === 'temperature' ? 1 : 0.85;
     const smoothAlpha = baseAlpha * fade;
     const alpha =
-      imageryKind === 'tileset'
+      gpuActive && imageryKind === 'tileset'
         ? Math.round(smoothAlpha * 10) / 10
         : smoothAlpha;
     if (Math.abs(imagery.alpha - alpha) > 0.005) imagery.alpha = alpha;
-    const show = alpha > 0;
+    const show =
+      alpha > 0 &&
+      !(
+        imageryKind === 'tileset' && height < WEATHER_TILESET_MIN_HEIGHT_METERS
+      );
     if (imagery.show !== show) imagery.show = show;
   }
   function installImagery() {
@@ -370,7 +378,8 @@ export function createWindRendering({
       // Temperature colors carry quantitative meaning; double transparency
       // blends orange heat into blue ocean and obscures useful gradients.
       imagery.alpha = overlay === 'temperature' ? 1 : 0.85;
-      if (gpuActive) updateImageryFade(viewer.scene.camera, true);
+      if (gpuActive || kind === 'tileset')
+        updateImageryFade(viewer.scene.camera, true);
       imageryErrorRemove = provider.errorEvent?.addEventListener(() => {
         imageryError = 'Globe field image unavailable';
       });
@@ -399,7 +408,7 @@ export function createWindRendering({
       }
       viewerReady()?.scene?.requestRender?.();
     }
-    if (gpuActive && kind !== 'none')
+    if ((gpuActive || kind === 'tileset') && kind !== 'none')
       updateImageryFade(viewerReady()?.scene?.camera, true);
     if (kind === 'none') imageryError = NO_IMAGERY_HOST;
     else if (wasHidden) {
@@ -478,7 +487,8 @@ export function createWindRendering({
     removers.push(() => target.removeEventListener(event, callback));
   }
   function cameraSettled() {
-    if (gpuActive) updateImageryFade(viewerReady()?.scene?.camera, true);
+    if (gpuActive || imageryKind === 'tileset')
+      updateImageryFade(viewerReady()?.scene?.camera, true);
     cameraMoved();
   }
   function cameraMoved() {

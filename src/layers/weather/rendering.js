@@ -1,6 +1,6 @@
 import { weatherTileUrl, weatherImageUrl } from './source.js';
 import { orderWeatherImagery } from './imageryOrder.js';
-import { NO_IMAGERY_HOST } from './imageryHost.js';
+import { imageryHostStatus } from './imageryHost.js';
 
 const INFRARED_COLOR_TO_ALPHA_THRESHOLD = 0.55;
 // Bounded display detail for the hourly, approximately 3 km global product.
@@ -49,12 +49,18 @@ export function createWeatherRendering({
     previous.resolve(false);
   }
   function rehome(restage = true) {
-    const { collection, kind } = getHost();
+    const host = getHost();
+    const { collection, kind } = host;
+    const hidden = imageryHostStatus(host, viewer.camera) !== null;
     const changed =
       (current && current.collection !== collection) ||
       (incoming && incoming.collection !== collection);
-    if (!changed) return false;
-    cancelIncoming();
+    const visibilityChanged = current && current.layer.show === hidden;
+    if (changed || hidden) cancelIncoming();
+    if (current) {
+      if (!hidden && current.layer.alpha !== alpha) current.layer.alpha = alpha;
+      if (visibilityChanged) current.layer.show = !hidden;
+    }
     if (current && current.collection !== collection) {
       current.collection?.remove(current.layer, false);
       current.collection = collection;
@@ -63,13 +69,13 @@ export function createWeatherRendering({
         orderWeatherImagery(collection, current.layer, current.priority);
       }
     }
-    if (current && kind !== 'none') {
+    if (current && !hidden) {
       if (current.product === 'clouds' && current.kind !== kind) {
         if (restage) void api.setFrame(current.snapshot, current.time);
       } else current.kind = kind;
     }
-    viewer.scene.requestRender();
-    return true;
+    if (changed || visibilityChanged) viewer.scene.requestRender();
+    return Boolean(changed || visibilityChanged);
   }
   const api = {
     rehome,
@@ -77,8 +83,9 @@ export function createWeatherRendering({
       signal?.throwIfAborted();
       rehome(false);
       cancelIncoming();
-      const { collection, kind } = getHost();
-      if (kind === 'none') return false;
+      const host = getHost();
+      const { collection, kind } = host;
+      if (imageryHostStatus(host, viewer.camera)) return false;
       if (
         current?.time === time &&
         current.product === snapshot.product &&
@@ -271,7 +278,7 @@ export function createWeatherRendering({
     },
     setAlpha(value) {
       alpha = value;
-      if (current) current.layer.alpha = alpha;
+      if (current && current.layer.show) current.layer.alpha = alpha;
       viewer.scene.requestRender();
     },
     clear() {
@@ -291,7 +298,7 @@ export function createWeatherRendering({
         deferredTiles: incoming?.deferred.size ?? 0,
         loadedTiles: (incoming || current)?.loaded ?? 0,
         frameLoadMs: current?.loadMs ?? null,
-        error: getHost().kind === 'none' ? NO_IMAGERY_HOST : lastError,
+        error: imageryHostStatus(getHost(), viewer.camera) || lastError,
       };
     },
   };

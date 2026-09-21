@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as Cesium from 'cesium';
 
 import { createWindRendering } from './rendering.js';
+import { WEATHER_TILESET_MIN_HEIGHT_METERS } from '../weather/imageryHost.js';
 
 function event() {
   const listeners = new Set();
@@ -1103,6 +1104,20 @@ for (const overlay of ['speed', 'temperature', 'pressure']) {
     camera.moveEnd.emit();
     assert.equal(layer.alpha, 0);
     assert.equal(layer.show, false);
+    for (const height of [
+      WEATHER_TILESET_MIN_HEIGHT_METERS - 1,
+      WEATHER_TILESET_MIN_HEIGHT_METERS,
+      WEATHER_TILESET_MIN_HEIGHT_METERS + 1,
+    ]) {
+      camera.positionCartographic.height = height;
+      camera.moveEnd.emit();
+      assert.equal(
+        layer.alpha,
+        0,
+        'existing fade still hides the field above the hard floor',
+      );
+      assert.equal(layer.show, false);
+    }
     camera.positionCartographic.height = Math.sqrt(200_000 * 1_200_000);
     camera.moveEnd.emit();
     writes = layer.alphaWrites;
@@ -1123,5 +1138,50 @@ for (const overlay of ['speed', 'temperature', 'pressure']) {
     assert.equal(h.imagery[0].alpha, overlay === 'temperature' ? 1 : 0.85);
     h.rendering.destroy();
     assert.equal(camera.moveEnd.size, 0);
+  });
+}
+
+for (const overlay of ['speed', 'temperature', 'pressure']) {
+  test(`${overlay} canvas fallback keeps the tileset hard floor without changing globe alpha`, () => {
+    let kind = 'tileset';
+    const h = harness({
+      getHost: () => ({ collection: h.viewer.imageryLayers, kind }),
+    });
+    const camera = h.viewer.scene.camera;
+    camera.positionCartographic.height = WEATHER_TILESET_MIN_HEIGHT_METERS - 1;
+    h.rendering.attach();
+    h.rendering.setOptions({ overlay });
+    h.rendering.setField({
+      ...FIELD,
+      scalar: {
+        kind: overlay,
+        units: overlay === 'pressure' ? 'hPa' : '°C',
+        values: Float32Array.of(overlay === 'pressure' ? 1013 : 20),
+      },
+    });
+    h.rendering.start();
+    const layer = h.imagery[0];
+    const textures = h.textures.length;
+    const baseAlpha = overlay === 'temperature' ? 1 : 0.85;
+    assert.equal(layer.show, false);
+    assert.equal(layer.alpha, baseAlpha);
+    camera.positionCartographic.height = WEATHER_TILESET_MIN_HEIGHT_METERS;
+    camera.moveEnd.emit();
+    assert.equal(layer.show, true);
+    camera.positionCartographic.height = 1200;
+    h.preRender.emit();
+    assert.equal(layer.show, true, 'tileset visibility waits for moveEnd');
+    camera.moveEnd.emit();
+    assert.equal(layer.show, false);
+    assert.equal(
+      h.textures.length,
+      textures,
+      'height changes keep the field texture',
+    );
+    kind = 'globe';
+    h.rendering.rehome();
+    assert.equal(h.imagery[0].show, true);
+    assert.equal(h.imagery[0].alpha, baseAlpha);
+    h.rendering.destroy();
   });
 }

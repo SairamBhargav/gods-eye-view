@@ -2,6 +2,8 @@
 
 ## Unreleased — weather review
 
+- On 3D Tiles, observed weather imagery hides below 60 km camera height to avoid
+  re-mapping dense tiles and resumes above that height.
 - Drape weather imagery and wind color fields onto photorealistic 3D Tiles.
 - Draw infrared pixels below a brightness threshold transparent so bright (cold)
   areas stand out. This is a display filter, not a cloud mask.

@@ -51,6 +51,9 @@ observation layers provide radar and satellite history; none claims measured clo
 Weather imagery drapes onto the active globe or photorealistic 3D Tiles, retaining
 its observation when the map source changes. A map without an imagery host pauses
 history while metadata refresh continues, then resumes when a host returns.
+On 3D Tiles, observed weather imagery hides below 60 km camera height to avoid
+re-mapping dense tiles; it retains the shown frame and playback intent, then
+resumes at or above 60 km. Globe hosts are unaffected.
 Infrared pixels below a brightness threshold are drawn transparent so bright
 (cold) areas stand out; this is a display filter, not a cloud mask.
 Cesium 1.138's `ImageryPipelineStage.js` honours `ImageryLayer.colorToAlpha`

@@ -1069,3 +1069,141 @@ for (const statusCode of [429, 503]) {
     h.rendering.clear();
   });
 }
+
+for (const [id, product] of [
+  ['weather-radar', 'radar'],
+  ['weather-satellite', 'clouds-regional'],
+  ['weather-satellite', 'clouds'],
+  ['weather-lightning', 'lightning'],
+]) {
+  test(`${product} retains its frame and pauses history below the tileset height floor`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.method(Date, 'now', () => Date.parse(times[2]));
+    let now = 0;
+    let host;
+    const h = renderingHarness({ getHost: () => host, now: () => now });
+    host = { collection: h.viewer.imageryLayers, kind: 'tileset' };
+    const camera = {
+      moveEnd: event(),
+      positionCartographic: { height: 60_000 },
+    };
+    h.viewer.camera = camera;
+    const events = target();
+    const layer = createWeatherLayer({
+      id,
+      feed: { getSnapshot: async () => ({ ...snapshot, product }) },
+      createRendering: () => h.rendering,
+      documentRef: target({ hidden: false }),
+      eventTarget: events,
+      matchMedia: () => target({ matches: false }),
+    });
+    layer.init(h.viewer);
+    layer.attachShellServices({ imageryHost: () => host });
+    layer.setParams({ product });
+    layer.enable();
+    const update = layer.update();
+    await flush();
+    const provider = h.providers[0];
+    provider.response = { promise: Promise.resolve({}) };
+    await provider.requestImage(0, 0, 0);
+    now = 250;
+    h.settle();
+    await update;
+    const current = h.layers[0];
+    assert.equal(current.show, true);
+    layer.setParams({ play: true });
+    t.mock.timers.tick(2000);
+    assert.equal(h.layers.length, 2, 'history has an in-flight stage');
+
+    camera.positionCartographic.height = 59_999;
+    camera.moveEnd.emit();
+    await flush();
+    assert.equal(current.show, false);
+    assert.equal(current.destroyed, undefined, 'current frame stays owned');
+    assert.deepEqual(h.layers, [current], 'only the incoming stage is removed');
+    assert.equal(layer.getDiagnostics().time, times[2]);
+    assert.equal(layer.getDiagnostics().playing, false);
+    assert.equal(layer.getDiagnostics().timerActive, false);
+    assert.equal(
+      layer.getRowControls().summary.status,
+      'Hidden below 60 km on 3D Tiles',
+    );
+    assert.equal(layer.getRowControls().info, 'Hidden below 60 km on 3D Tiles');
+    await layer.update();
+    t.mock.timers.tick(10_000);
+    assert.equal(
+      h.providers.length,
+      2,
+      'hidden updates and history stage nothing',
+    );
+    assert.equal(
+      await h.rendering.setFrame({ ...snapshot, product }, times[0]),
+      false,
+    );
+    layer.setParams({ opacity: 'light' });
+    assert.notEqual(
+      current.alpha,
+      0.4,
+      'opacity waits until the layer is shown',
+    );
+
+    camera.positionCartographic.height = 60_000;
+    camera.moveEnd.emit();
+    assert.equal(current.show, true);
+    assert.equal(current.alpha, 0.4);
+    assert.equal(layer.getDiagnostics().time, times[2]);
+    assert.equal(layer.getDiagnostics().playing, true);
+    assert.equal(layer.getDiagnostics().timerActive, true);
+    assert.equal(layer.getRowControls().summary.status, null);
+    t.mock.timers.tick(2000);
+    assert.equal(h.providers.length, 3, 'retained playback intent resumes');
+
+    camera.positionCartographic.height = 1200;
+    events.emit('gev:map-stack-changed');
+    await flush();
+    assert.equal(
+      current.show,
+      false,
+      'map-stack events also apply the height gate',
+    );
+    host = { collection: null, kind: 'none' };
+    events.emit('gev:map-stack-changed');
+    assert.equal(layer.getRowControls().summary.status, NO_IMAGERY_HOST);
+    assert.equal(layer.getRowControls().info, NO_IMAGERY_HOST);
+    host = { collection: h.viewer.imageryLayers, kind: 'globe' };
+    events.emit('gev:map-stack-changed');
+    assert.equal(current.show, true, 'globe ignores the low camera height');
+    assert.equal(layer.getDiagnostics().playing, true);
+    t.mock.timers.tick(2000);
+    assert.ok(h.providers.length > 3, 'globe keeps staging at low height');
+    layer.destroy();
+    assert.equal(camera.moveEnd.size, 0);
+    assert.equal(events.size, 0);
+  });
+}
+
+test('starting below the tileset floor stages latest only after crossing above it', async () => {
+  let host;
+  const h = renderingHarness({ getHost: () => host });
+  host = { collection: h.viewer.imageryLayers, kind: 'tileset' };
+  h.viewer.camera = {
+    moveEnd: event(),
+    positionCartographic: { height: 1200 },
+  };
+  const layer = createWeatherLayer({
+    feed: { getSnapshot: async () => snapshot },
+    createRendering: () => h.rendering,
+    eventTarget: target(),
+  });
+  layer.init(h.viewer);
+  layer.attachShellServices({ imageryHost: () => host });
+  layer.enable();
+  await layer.update();
+  assert.equal(h.providers.length, 0);
+  h.viewer.camera.positionCartographic.height = 60_001;
+  h.viewer.camera.moveEnd.emit();
+  assert.equal(h.providers.length, 1);
+  assert.equal(layer.getDiagnostics().loading, true);
+  layer.destroy();
+  await flush();
+});

@@ -1,6 +1,6 @@
 import * as Cesium from 'cesium';
 import { createWeatherRendering } from './rendering.js';
-import { NO_IMAGERY_HOST } from './imageryHost.js';
+import { imageryHostStatus } from './imageryHost.js';
 
 const STOPS = [
   [10, '#00ecec'],
@@ -61,6 +61,7 @@ export function createWeatherLayer({
   let imageryHost = null;
   let hostCollection;
   let hostHidden = false;
+  let hostStatus = null;
   const getHost = () =>
     imageryHost?.() ?? { collection: viewer?.imageryLayers, kind: 'globe' };
   const notify = () => listener?.();
@@ -82,11 +83,11 @@ export function createWeatherLayer({
 
   function checkHost(resume = true) {
     const host = getHost();
-    const changed =
-      host.collection !== hostCollection ||
-      hostHidden !== (host.kind === 'none');
+    const status = imageryHostStatus(host, viewer?.camera);
+    const changed = host.collection !== hostCollection || hostStatus !== status;
     hostCollection = host.collection;
-    hostHidden = host.kind === 'none';
+    hostStatus = status;
+    hostHidden = status !== null;
     // Keep playback intent and the displayed time while the host is unavailable.
     if (!changed || !rendering) return;
     ++generation;
@@ -173,6 +174,7 @@ export function createWeatherLayer({
       motion?.addEventListener?.('change', onVisibility);
       documentRef?.addEventListener?.('visibilitychange', onVisibility);
       removeCamera = viewer.camera.moveEnd?.addEventListener(() => {
+        checkHost();
         if (enabled) notify();
       });
     },
@@ -381,7 +383,7 @@ export function createWeatherLayer({
             ? `${followLatest ? 'Observed' : 'History'} · ${utc(time)} · ${lag}`
             : 'Waiting for observation',
           status:
-            (hostHidden ? NO_IMAGERY_HOST : null) ||
+            hostStatus ||
             error ||
             diagnostic?.error ||
             (observationDelayed()
@@ -477,7 +479,7 @@ export function createWeatherLayer({
               }))
             : [],
         info: hostHidden
-          ? NO_IMAGERY_HOST
+          ? hostStatus
           : `${radar ? 'RADAR REFLECTIVITY · dBZ' : lightning ? 'LIGHTNING DENSITY · 15 min accumulation' : product === 'clouds' ? 'GLOBAL INFRARED · hourly' : 'GOES INFRARED · ~5 min'}\n${time ? `${followLatest ? 'Latest observation' : 'History'}: ${utc(time)}\n${lag}${current && !followLatest ? ` · frame ${index + 1}/${times.length}` : ''}${loading ? ' · loading' : ''}` : `Observation: unavailable${loading ? ' · loading' : ''}`}${manifest?.stale ? '\nSTALE · cached source metadata' : ''}${error || diagnostic?.error ? '\n' + (error || diagnostic.error) : ''}\n${radar ? 'Contiguous US · gaps ≠ no rain' : lightning ? 'Americas + Pacific · not individual strikes\nColor: strikes/km²/min ×10³' : product === 'clouds' ? '60°S–60°N · typically 2–3 h delayed' : 'North America · infrared imagery'}${outside ? '\nMap center is outside source coverage' : ''}${motion?.matches ? '\nReduced motion · manual history available' : ''}`,
         infoTitle: lightning
           ? 'NOAA/NWS 15-minute lightning density derived from Vaisala NLDN/GLD360. Coverage 110°E across the Pacific/Americas to 0°, 25°S–80°N. Not a live strike count, global coverage or a safety warning.'
