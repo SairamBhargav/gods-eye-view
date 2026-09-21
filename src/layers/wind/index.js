@@ -333,7 +333,7 @@ export function createWindLayer({
           (overlay === 'none' && diagnostic?.renderMode === 'gpu-streamlines')
             ? []
             : legend,
-        info: `${model === 'ifs' ? 'ECMWF IFS' : 'GFS'} forecast · ${label} (${legendUnit})\nValid: ${valid || 'Unavailable'}\nIssued: ${run || 'Unavailable'}${manifest?.stale ? ' · STALE' : ''}${loading ? '\nLoading forecast…' : preparing ? '\nPreparing globe flow…' : ''}${error ? '\n' + error : ''}${scalarMissing ? '\nSelected field unavailable · wind remains visible' : ''}${imageryError && !scalarMissing ? '\n' + imageryError + ' · wind remains visible' : ''}`,
+        info: `${model === 'ifs' ? 'ECMWF IFS' : 'GFS'} forecast · ${label} (${legendUnit})\nValid: ${valid || 'Unavailable'}${loading ? ' · loading' : preparing ? ' · preparing' : ''}\nIssued: ${run || 'Unavailable'}${manifest?.stale ? ' · STALE' : ''}${error ? '\n' + error : ''}${scalarMissing ? '\nSelected field unavailable · wind remains visible' : ''}${imageryError && !scalarMissing ? '\n' + imageryError + ' · wind remains visible' : ''}`,
         infoTitle:
           'Surface wind at 10 m. Approximately 1° global grid. Curves follow the 10 m wind field, lifted 12 km for visibility; display height is not weather altitude. View lighting is for readability. Animation shows flow through one fixed forecast; it does not advance time. Color fields drape the globe basemap; photorealistic 3D tiles may cover them.',
       };

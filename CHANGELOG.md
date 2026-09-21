@@ -2,6 +2,8 @@
 
 ## Unreleased — weather review
 
+- Reserve stable weather status space and coalesce panel refreshes per frame.
+
 - Add keyless NOAA/NHC cyclone advisory positions, coherent forecast tracks and
   uncertainty cones, plus NOAA's observed 15-minute lightning density imagery.
   Preserve source clocks, basin coverage and explicit pending/stale states.

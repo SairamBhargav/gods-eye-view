@@ -31,6 +31,7 @@ export function createWeatherSummary({ container, onOpen = () => {} } = {}) {
         if (!row) {
           const element = document.createElement('button');
           element.type = 'button';
+          element.title = 'Open weather controls';
           element.className = 'weather-summary-product';
           element.dataset.weatherOpen = id;
           const label = document.createElement('strong');
@@ -48,26 +49,41 @@ export function createWeatherSummary({ container, onOpen = () => {} } = {}) {
           for (const node of [label, detail, status, ramp, scale])
             element.appendChild(node);
           root.appendChild(element);
-          row = { element, label, detail, status, ramp, scale, zero };
+          row = {
+            element,
+            label,
+            detail,
+            status,
+            ramp,
+            scale,
+            zero,
+            gradient: '',
+          };
           rows.set(id, row);
         }
         text(row.label, summary.label);
         text(row.detail, summary.detail);
         text(row.status, summary.status);
-        row.status.hidden = !summary.status;
-        row.element.title = 'Open weather controls';
         const colors = legend
           .map(({ color }) => color)
           .filter((color) => /^#[0-9a-f]{6}$/i.test(color));
-        row.ramp.hidden = row.scale.hidden = colors.length < 2;
+        const hideScale = colors.length < 2;
+        if (row.ramp.hidden !== hideScale) row.ramp.hidden = hideScale;
+        if (row.scale.hidden !== hideScale) row.scale.hidden = hideScale;
         const zeroIndex = legend.findIndex(({ label }) => label === '0');
-        row.zero.hidden =
+        const hideZero =
           summary.units !== '°C' ||
           zeroIndex < 0 ||
           colors.length < 2 ||
           colors.length !== legend.length;
-        if (!row.zero.hidden)
-          row.zero.style.left = `${(zeroIndex / (legend.length - 1)) * 100}%`;
+        if (row.zero.hidden !== hideZero) row.zero.hidden = hideZero;
+        if (!hideZero) {
+          const left = `${(zeroIndex / (legend.length - 1)) * 100}%`;
+          if (row.zeroLeft !== left) {
+            row.zero.style.left = left;
+            row.zeroLeft = left;
+          }
+        }
         const gradient =
           colors.length > 1
             ? `linear-gradient(to right, ${colors.join(',')})`
@@ -88,7 +104,8 @@ export function createWeatherSummary({ container, onOpen = () => {} } = {}) {
           row.element.remove();
           rows.delete(id);
         }
-      root.hidden = rows.size === 0;
+      const hidden = rows.size === 0;
+      if (root.hidden !== hidden) root.hidden = hidden;
     },
     destroy() {
       root.removeEventListener('click', click);

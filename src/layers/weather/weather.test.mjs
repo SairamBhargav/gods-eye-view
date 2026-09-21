@@ -718,3 +718,23 @@ test('historical observations do not relabel a fresh lightning feed as stale', a
   assert.match(h.layer.getRowControls().summary.detail, /History/);
   h.layer.destroy();
 });
+
+test('history loading updates an existing info line and preserves summary status', async (t) => {
+  t.mock.method(Date, 'now', () => Date.parse(times[2]));
+  const h = layerHarness();
+  const update = h.layer.update();
+  await flush();
+  h.stages[0].finish();
+  await update;
+  h.layer.setParams({ step: -1 });
+  await flush();
+  const loading = h.layer.getRowControls();
+  assert.match(loading.info, /History: [^\n]+\n[^\n]+ · loading/);
+  assert.equal(loading.summary.status, 'Loading next frame…');
+  h.stages.at(-1).finish();
+  await flush();
+  const ready = h.layer.getRowControls();
+  assert.equal(ready.info.split('\n').length, loading.info.split('\n').length);
+  assert.doesNotMatch(ready.info, / · loading/);
+  h.layer.destroy();
+});

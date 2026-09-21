@@ -318,13 +318,18 @@ test('renderer readiness pushes fresh loading stats and controls to the displaye
       info: layer.getRowControls().info,
     };
   });
-  await layer.update();
+  const update = layer.update();
+  const loadingInfo = layer.getRowControls().info;
+  assert.match(loadingInfo, /Valid: [^\n]+ · loading/);
+  await update;
   assert.equal(displayed.loading, true);
-  assert.match(displayed.info, /Preparing globe flow/);
+  assert.match(displayed.info, /Valid: [^\n]+ · preparing/);
+  assert.equal(displayed.info.split('\n').length, loadingInfo.split('\n').length);
   ready = true;
   statusChanged();
   assert.equal(displayed.loading, false);
-  assert.doesNotMatch(displayed.info, /Preparing globe flow/);
+  assert.doesNotMatch(displayed.info, / · preparing| · loading/);
+  assert.equal(displayed.info.split('\n').length, loadingInfo.split('\n').length);
   layer.destroy();
 });
 

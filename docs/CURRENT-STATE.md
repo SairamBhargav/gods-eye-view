@@ -45,7 +45,8 @@ hardware GPU behavior remains unverified; software-rendered checks do not
 establish native GPU performance or compatibility.
 
 Weather keeps a compact active-product summary and legend visible outside the
-expanded controls. Each product retains its own observed or forecast clock.
+expanded controls. Status lines reserve their space and panel refreshes are
+coalesced per frame. Each product retains its own observed or forecast clock.
 Inspection emphasizes the chosen scalar and marks the exact sampled location;
 the passive marker follows that snapshot, respects globe occlusion and disappears
 on dismissal, field/model/unit changes, disable or teardown. Clean view and

@@ -2,7 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWeatherSummary } from './weatherSummary.js';
 
-function fixture() {
+function fixture(onWrite = () => {}) {
+  const tracked = (target) =>
+    new Proxy(target, {
+      set(object, key, value) {
+        onWrite(key);
+        return Reflect.set(object, key, value);
+      },
+    });
   const document = {
     createElement: () => {
       const element = new EventTarget();
@@ -10,8 +17,12 @@ function fixture() {
         ownerDocument: document,
         children: [],
         dataset: {},
-        style: {},
-        setAttribute() {},
+        hidden: false,
+        textContent: '',
+        style: tracked({ background: '', left: '' }),
+        setAttribute() {
+          onWrite('attribute');
+        },
         appendChild(child) {
           this.children.push(child);
           child.parent = this;
@@ -22,7 +33,7 @@ function fixture() {
           );
         },
       });
-      return element;
+      return tracked(element);
     },
   };
   return document.createElement('body');
@@ -107,5 +118,48 @@ test('temperature freezing anchor follows its physical legend position, not its 
     { id: 'wind', summary: { label: 'Speed', units: 'km/h' }, legend },
   ]);
   assert.equal(zero.hidden, true);
+  view.destroy();
+});
+
+test('status always occupies the same child and remains visible with or without text', () => {
+  const container = fixture();
+  const view = createWeatherSummary({ container });
+  const entry = { id: 'radar', summary: { label: 'Radar' } };
+  view.update([entry]);
+  const row = container.children[0].children[1];
+  const status = row.children[2];
+  for (const value of ['Loading next frame…', '', undefined]) {
+    view.update([{ ...entry, summary: { ...entry.summary, status: value } }]);
+    assert.equal(row.children[2], status);
+    assert.equal(status.hidden, false);
+    assert.equal(status.textContent, value || '');
+  }
+  view.destroy();
+});
+
+test('identical summary updates perform no DOM writes, including visible temperature anchors', () => {
+  let writes = 0;
+  const container = fixture(() => writes++);
+  const view = createWeatherSummary({ container });
+  const entry = {
+    id: 'wind',
+    summary: { label: 'Temperature', detail: 'Forecast', units: '°C' },
+    legend: [
+      { label: '-10', color: '#0000ff' },
+      { label: '0', color: '#ffffff' },
+      { label: '10', color: '#ff0000' },
+    ],
+  };
+  for (const entries of [
+    [entry],
+    [{ ...entry, summary: { ...entry.summary, status: 'Loading' } }],
+    [{ id: 'radar', summary: { label: 'Radar' } }],
+    [],
+  ]) {
+    view.update(entries);
+    writes = 0;
+    view.update(entries);
+    assert.equal(writes, 0);
+  }
   view.destroy();
 });

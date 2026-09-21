@@ -121,6 +121,7 @@ export class LayerPanel {
     this._generation = 0;
     this._removers = [];
     this._destroyed = false;
+    this._cancelRowControlsRefresh = null;
   }
   mount(container) {
     if (this._destroyed) return;
@@ -148,6 +149,8 @@ export class LayerPanel {
   }
   _releaseBindings() {
     this._generation++;
+    this._cancelRowControlsRefresh?.();
+    this._cancelRowControlsRefresh = null;
     for (const remove of this._removers.splice(0)) remove();
   }
   destroy() {
@@ -257,7 +260,7 @@ export class LayerPanel {
         // that can also fail) pushes a re-render through this; nothing else
         // would repaint the row before its next scheduled refresh.
         const unsubscribe = this.subscribeRowControls(layer.id, () =>
-          this._refreshTogglePanel(),
+          this._scheduleRowControlsRefresh(),
         );
         if (unsubscribe) this._removers.push(unsubscribe);
         const controls = document.createElement('div');
@@ -300,6 +303,29 @@ export class LayerPanel {
     this._refreshWeatherSummary();
   }
 
+  _scheduleRowControlsRefresh() {
+    if (this._destroyed || this._cancelRowControlsRefresh) return;
+    const refresh = () => {
+      this._cancelRowControlsRefresh = null;
+      if (!this._destroyed) this._refreshTogglePanel();
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      const frame = requestAnimationFrame(refresh);
+      this._cancelRowControlsRefresh = () => cancelAnimationFrame(frame);
+    } else {
+      const timer = setTimeout(refresh, 0);
+      this._cancelRowControlsRefresh = () => clearTimeout(timer);
+    }
+  }
+
+  /** Synchronously flush a pending row-controls refresh, including in tests. */
+  _flushRowControlsRefresh() {
+    if (this._destroyed || !this._cancelRowControlsRefresh) return;
+    this._cancelRowControlsRefresh();
+    this._cancelRowControlsRefresh = null;
+    this._refreshTogglePanel();
+  }
+
   _refreshWeatherSummary() {
     this._weatherSummary?.update(
       this.getAll()
@@ -333,8 +359,8 @@ export class LayerPanel {
    * Chip BUTTONS are reconciled in place, keyed by chip id, rather than
    * rebuilt: this runs on every panel refresh — including the one the chip's
    * own click triggers — and replacing the node would drop keyboard focus
-   * mid-interaction. Legend entries hold no focus and no listeners, so they
-   * are replaced freely.
+   * mid-interaction. Legend entries are rebuilt only when their content changes;
+   * the info node is retained across refreshes.
    * @param {HTMLElement|null} container The row's `.data-toggle-controls` node.
    * @param {object} layer Registered layer entry.
    * @param {HTMLElement|null} [listContainer] The row's `.data-row-list` node.
@@ -348,18 +374,8 @@ export class LayerPanel {
     container.hidden =
       chips.length === 0 && legend.length === 0 && !controls?.info;
 
-    for (const node of [...container.children]) {
-      if (
-        String(node.className)
-          .split(/\s+/)
-          .some((name) =>
-            ['data-toggle-legend-item', 'data-toggle-controls-info'].includes(
-              name,
-            ),
-          )
-      )
-        node.remove();
-    }
+    const info = container._rowControlsInfo || null;
+    const firstLegend = container.querySelector('.data-toggle-legend-item');
 
     const stale = new Map();
     for (const node of [...container.children]) {
@@ -373,7 +389,7 @@ export class LayerPanel {
         button = document.createElement('button');
         button.type = 'button';
         button.dataset.chipId = chip.id;
-        container.appendChild(button);
+        container.insertBefore(button, firstLegend || info);
       }
       const state = chip.state || (chip.active ? 'active' : 'idle');
       button.className = `data-toggle-chip chip-${state}${chip.active ? ' active' : ''}`;
@@ -385,27 +401,47 @@ export class LayerPanel {
     }
     for (const node of stale.values()) node.remove();
 
-    for (const item of legend) {
-      const entry = document.createElement('span');
-      entry.className = 'data-toggle-legend-item';
-      if (item.blurb) entry.title = item.blurb;
-      const swatch = document.createElement('span');
-      swatch.className = 'data-toggle-legend-swatch';
-      swatch.style.background = item.color;
-      const text = document.createElement('span');
-      text.textContent =
-        item.count == null
-          ? String(item.label)
-          : `${item.label} ${this._formatCount(item.count)}`;
-      entry.append(swatch, text);
-      container.appendChild(entry);
+    const legendSignature = JSON.stringify(
+      legend.map(({ label, color, count, blurb }) => [
+        label,
+        color,
+        count,
+        blurb,
+      ]),
+    );
+    if (container._legendSignature !== legendSignature) {
+      for (const node of [...container.children]) {
+        if (node.className === 'data-toggle-legend-item') node.remove();
+      }
+      for (const item of legend) {
+        const entry = document.createElement('span');
+        entry.className = 'data-toggle-legend-item';
+        if (item.blurb) entry.title = item.blurb;
+        const swatch = document.createElement('span');
+        swatch.className = 'data-toggle-legend-swatch';
+        swatch.style.background = item.color;
+        const text = document.createElement('span');
+        text.textContent =
+          item.count == null
+            ? String(item.label)
+            : `${item.label} ${this._formatCount(item.count)}`;
+        entry.append(swatch, text);
+        container.insertBefore(entry, info);
+      }
+      container._legendSignature = legendSignature;
     }
-    if (controls?.info) {
-      const info = document.createElement('div');
-      info.className = 'data-toggle-controls-info';
-      info.textContent = String(controls.info);
-      if (controls.infoTitle) info.title = controls.infoTitle;
-      container.appendChild(info);
+    if (controls?.info || info) {
+      const node = info || document.createElement('div');
+      if (!info) {
+        node.className = 'data-toggle-controls-info';
+        container.appendChild(node);
+        container._rowControlsInfo = node;
+      }
+      const text = controls?.info ? String(controls.info) : '';
+      const title = controls?.infoTitle || '';
+      if (node.textContent !== text) node.textContent = text;
+      if (node.title !== title) node.title = title;
+      if (node.hidden !== !text) node.hidden = !text;
     }
   }
 

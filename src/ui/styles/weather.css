@@ -236,6 +236,7 @@
   font-size: 10px;
 }
 .weather-summary-product .weather-summary-status {
+  min-height: 1.45em;
   color: #ffd595;
 }
 .weather-summary-ramp {
