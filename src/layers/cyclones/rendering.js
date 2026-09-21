@@ -6,7 +6,7 @@ export function coherentCycloneGeometry(storm) {
   );
 }
 
-/** Static Cesium entities, one data-source owner; no timers, input handlers or clock. */
+/** Static Cesium entities with owned horizon culling; no timers or clock. */
 export function createCycloneRendering({ viewer, cesium: C }) {
   let source = null,
     generation = 0,
@@ -18,12 +18,61 @@ export function createCycloneRendering({ viewer, cesium: C }) {
   let entityStorms = new WeakMap();
   let entityIds = new Set();
   let counts = { storms: 0, tracks: 0, cones: 0, forecastPoints: 0 };
+  let horizonStorms = [],
+    removePreRender = null,
+    pointOccluder = null,
+    sphereOccluder = null;
   const blue = C.Color.fromCssColorString('#7fe6ed');
   const gold = C.Color.fromCssColorString('#ffe19a');
   const white = C.Color.WHITE;
   const render = () => {
     if (!viewer.isDestroyed?.()) viewer.scene.requestRender();
   };
+  function cullHorizon() {
+    pointOccluder.cameraPosition = viewer.camera.positionWC;
+    sphereOccluder.cameraPosition = viewer.camera.positionWC;
+    let changed = false;
+    for (let i = 0; i < horizonStorms.length; i++) {
+      const storm = horizonStorms[i];
+      for (let j = 0; j < storm.points.length; j++) {
+        const { entity, position } = storm.points[j];
+        const show = pointOccluder.isPointVisible(position);
+        if (entity.show !== show) {
+          entity.show = show;
+          changed = true;
+        }
+      }
+      if (!storm.shapes.length) continue;
+      const show = sphereOccluder.isBoundingSphereVisible(storm.sphere);
+      for (let j = 0; j < storm.shapes.length; j++) {
+        const entity = storm.shapes[j];
+        if (entity.show !== show) {
+          entity.show = show;
+          changed = true;
+        }
+      }
+    }
+    if (changed) render();
+  }
+  function syncHorizonListener() {
+    if (!horizonStorms.length) {
+      removePreRender?.();
+      removePreRender = null;
+      return;
+    }
+    if (removePreRender) return;
+    pointOccluder ||= new C.EllipsoidalOccluder(
+      C.Ellipsoid.WGS84,
+      viewer.camera.positionWC,
+    );
+    // EllipsoidalOccluder only tests points. An inscribed WGS84 sphere
+    // conservatively culls extents, retaining partially visible tracks/cones.
+    sphereOccluder ||= new C.Occluder(
+      new C.BoundingSphere(C.Cartesian3.ZERO, C.Ellipsoid.WGS84.minimumRadius),
+      viewer.camera.positionWC,
+    );
+    removePreRender = viewer.scene.preRender.addEventListener(cullHorizon);
+  }
   function remove(value) {
     if (!value) return;
     if (!viewer.dataSources.isDestroyed?.())
@@ -53,14 +102,19 @@ export function createCycloneRendering({ viewer, cesium: C }) {
       const nextEntityStorms = new WeakMap();
       const nextEntityIds = new Set();
       const nextCounts = { storms: 0, tracks: 0, cones: 0, forecastPoints: 0 };
+      const nextHorizonStorms = [];
       const position = ({ longitude, latitude }) =>
         C.Cartesian3.fromDegrees(longitude, latitude, 3000);
       const coordinate = (pair) =>
         position({ longitude: pair[0], latitude: pair[1] });
       try {
         for (const storm of snapshot.storms) {
+          const horizon = { points: [], shapes: [], sphere: null };
           const addEntity = (options) => {
             const entity = next.entities.add(options);
+            if (options.position)
+              horizon.points.push({ entity, position: options.position });
+            else horizon.shapes.push(entity);
             nextEntityStorms.set(entity, storm.id);
             nextEntityIds.add(entity.id);
             return entity;
@@ -171,6 +225,8 @@ export function createCycloneRendering({ viewer, cesium: C }) {
           // A status-only point still has a useful regional camera destination.
           sphere.radius = Math.max(sphere.radius, 500_000);
           nextSpheres.set(storm.id, sphere);
+          horizon.sphere = sphere;
+          nextHorizonStorms.push(horizon);
         }
         await viewer.dataSources.add(next);
         if (destroyed || generation !== owner || signal?.aborted) {
@@ -185,6 +241,8 @@ export function createCycloneRendering({ viewer, cesium: C }) {
         entityStorms = nextEntityStorms;
         entityIds = nextEntityIds;
         counts = nextCounts;
+        horizonStorms = nextHorizonStorms;
+        syncHorizonListener();
         select(selected);
         return true;
       } catch (error) {
@@ -210,6 +268,10 @@ export function createCycloneRendering({ viewer, cesium: C }) {
     },
     clear() {
       ++generation;
+      horizonStorms = [];
+      syncHorizonListener();
+      pointOccluder = null;
+      sphereOccluder = null;
       remove(source);
       source = null;
       centers.clear();

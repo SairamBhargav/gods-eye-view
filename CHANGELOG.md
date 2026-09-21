@@ -6,6 +6,7 @@
   rendering when no curve is visible.
 - Fade the wind color field below ~1,200 km camera height and hide it at 200 km.
 
+- Hide cyclone markers, labels, tracks and cones beyond the horizon on every map source.
 - Reserve stable weather status space and coalesce panel refreshes per frame.
 
 - Add keyless NOAA/NHC cyclone advisory positions, coherent forecast tracks and

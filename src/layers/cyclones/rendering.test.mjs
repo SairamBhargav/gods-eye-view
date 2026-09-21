@@ -1,10 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as Cesium from 'cesium';
 import { createCycloneRendering } from './rendering.js';
 
 function harness({ deferred = false } = {}) {
   const sources = [],
-    completions = [];
+    completions = [],
+    pointOccluders = [],
+    sphereOccluders = [];
+  const listeners = new Set();
+  const visibility = {
+    points: new Map(),
+    spheres: new Map(),
+    pointCalls: [],
+    sphereCalls: [],
+    writes: 0,
+  };
   const color = (value) => ({
     value,
     withAlpha: (alpha) => ({ value, alpha }),
@@ -21,14 +32,48 @@ function harness({ deferred = false } = {}) {
         this.y = y;
       }
     },
-    Cartesian3: { fromDegrees: (lon, lat, height) => ({ lon, lat, height }) },
+    Cartesian3: {
+      ZERO: { x: 0, y: 0, z: 0 },
+      fromDegrees: (lon, lat, height) => ({ lon, lat, height }),
+    },
+    Ellipsoid: { WGS84: { minimumRadius: 6356752 } },
+    EllipsoidalOccluder: class {
+      constructor(ellipsoid, cameraPosition) {
+        this.ellipsoid = ellipsoid;
+        this.cameraPosition = cameraPosition;
+        pointOccluders.push(this);
+      }
+      isPointVisible(position) {
+        visibility.pointCalls.push(position);
+        return visibility.points.get(position) ?? true;
+      }
+    },
+    Occluder: class {
+      constructor(sphere, cameraPosition) {
+        this.sphere = sphere;
+        this.cameraPosition = cameraPosition;
+        sphereOccluders.push(this);
+      }
+      isBoundingSphereVisible(sphere) {
+        visibility.sphereCalls.push(sphere);
+        return visibility.spheres.get(sphere) ?? true;
+      }
+    },
     PolygonHierarchy: class {
       constructor(positions, holes = []) {
         this.positions = positions;
         this.holes = holes;
       }
     },
-    BoundingSphere: { fromPoints: (points) => ({ points, radius: 10 }) },
+    BoundingSphere: class {
+      constructor(center, radius) {
+        this.center = center;
+        this.radius = radius;
+      }
+      static fromPoints(points) {
+        return { points, radius: 10 };
+      }
+    },
     LabelStyle: { FILL_AND_OUTLINE: 1 },
     HorizontalOrigin: { LEFT: 1 },
     ArcType: { GEODESIC: 1 },
@@ -38,6 +83,14 @@ function harness({ deferred = false } = {}) {
         this.entities = {
           values,
           add: (value) => {
+            let show = true;
+            Object.defineProperty(value, 'show', {
+              get: () => show,
+              set: (next) => {
+                show = next;
+                visibility.writes++;
+              },
+            });
             values.push(value);
             return value;
           },
@@ -50,7 +103,16 @@ function harness({ deferred = false } = {}) {
   };
   let renders = 0;
   const viewer = {
-    scene: { requestRender: () => renders++ },
+    camera: { positionWC: { x: 6378487, y: 0, z: 0 } },
+    scene: {
+      requestRender: () => renders++,
+      preRender: {
+        addEventListener(listener) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    },
     dataSources: {
       add(value) {
         if (deferred)
@@ -73,6 +135,15 @@ function harness({ deferred = false } = {}) {
     rendering: createCycloneRendering({ viewer, cesium }),
     sources,
     completions,
+    viewer,
+    cesium,
+    visibility,
+    pointOccluders,
+    sphereOccluders,
+    listeners,
+    frame() {
+      for (const listener of listeners) listener();
+    },
     get renders() {
       return renders;
     },
@@ -124,6 +195,171 @@ const storm = () => ({
       ],
     ],
   },
+});
+
+test('horizon culling updates only changed entities and keeps selection independent', async () => {
+  const h = harness();
+  await h.rendering.setSnapshot({
+    storms: [storm(), { ...storm(), id: 'near' }],
+  });
+  const entities = h.sources[0].entities.values;
+  const far = entities.filter((e) => e.id.startsWith('cyclone:ep152026:'));
+  const near = entities.filter((e) => e.id.startsWith('cyclone:near:'));
+  const forecast = far.find((e) => e.id.endsWith('forecast:0'));
+  const sphere = h.rendering.getFocusSphere('ep152026');
+  for (const entity of far)
+    if (entity.position) h.visibility.points.set(entity.position, false);
+  h.visibility.spheres.set(sphere, false);
+  h.rendering.setSelection('ep152026');
+  const before = h.renders;
+  h.frame();
+  assert.ok(far.every((e) => e.show === false));
+  assert.ok(near.every((e) => e.show === true));
+  assert.equal(forecast.label.show, true);
+  assert.equal(h.renders, before + 1);
+  assert.equal(h.visibility.writes, far.length);
+  assert.equal(h.visibility.pointCalls.length, 4);
+  assert.deepEqual(h.visibility.sphereCalls, [
+    sphere,
+    h.rendering.getFocusSphere('near'),
+  ]);
+  h.frame();
+  assert.equal(h.renders, before + 1);
+  assert.equal(h.visibility.writes, far.length);
+
+  // A visible portion of the extent keeps all tracks/cones shown even when
+  // the centre and an individual forecast point remain beyond the horizon.
+  h.visibility.spheres.set(sphere, true);
+  h.viewer.camera.positionWC = { x: 0, y: 6378487, z: 0 };
+  h.frame();
+  assert.ok(far.filter((e) => !e.position).every((e) => e.show));
+  assert.ok(far.filter((e) => e.position).every((e) => !e.show));
+  assert.equal(h.renders, before + 2);
+  assert.equal(h.pointOccluders.length, 1);
+  assert.equal(h.sphereOccluders.length, 1);
+  assert.equal(h.pointOccluders[0].ellipsoid, h.cesium.Ellipsoid.WGS84);
+  assert.equal(h.pointOccluders[0].cameraPosition, h.viewer.camera.positionWC);
+  assert.equal(h.sphereOccluders[0].cameraPosition, h.viewer.camera.positionWC);
+
+  h.rendering.setSelection('near');
+  assert.equal(forecast.label.show, false);
+  assert.equal(near.find((e) => e.id.endsWith('forecast:0')).label.show, true);
+  h.visibility.points.set(forecast.position, true);
+  const beforeReveal = h.renders;
+  h.frame();
+  assert.equal(forecast.show, true);
+  assert.equal(forecast.label.show, false);
+  assert.equal(far[0].show, false);
+  assert.equal(h.renders, beforeReveal + 1);
+  h.rendering.destroy();
+});
+
+test('horizon listener follows committed nonempty snapshots and clear/destroy', async () => {
+  const h = harness();
+  assert.equal(h.listeners.size, 0);
+  await h.rendering.setSnapshot({ storms: [] });
+  assert.equal(h.listeners.size, 0);
+  await h.rendering.setSnapshot({ storms: [storm()] });
+  assert.equal(h.listeners.size, 1);
+  const old = [...h.sources[0].entities.values];
+  await h.rendering.setSnapshot({ storms: [storm()] });
+  assert.equal(h.listeners.size, 1);
+  h.frame();
+  assert.ok(
+    h.visibility.pointCalls.every((p) => !old.some((e) => e.position === p)),
+  );
+  await h.rendering.setSnapshot({ storms: [] });
+  assert.equal(h.listeners.size, 0);
+  await h.rendering.setSnapshot({ storms: [storm()] });
+  h.rendering.clear();
+  assert.equal(h.listeners.size, 0);
+  const before = h.renders;
+  h.frame();
+  assert.equal(h.renders, before);
+  await h.rendering.setSnapshot({ storms: [storm()] });
+  assert.equal(h.listeners.size, 1);
+  h.rendering.destroy();
+  h.rendering.destroy();
+  assert.equal(h.listeners.size, 0);
+  assert.equal(await h.rendering.setSnapshot({ storms: [storm()] }), false);
+  assert.equal(h.listeners.size, 0);
+});
+
+test('late asynchronous additions never restore a cleared or destroyed horizon listener', async () => {
+  for (const method of ['clear', 'destroy']) {
+    const h = harness({ deferred: true });
+    const pending = h.rendering.setSnapshot({ storms: [storm()] });
+    assert.equal(h.listeners.size, 0);
+    h.rendering[method]();
+    h.completions.shift()();
+    assert.equal(await pending, false);
+    assert.equal(h.listeners.size, 0);
+  }
+});
+
+test('real Cesium culls far storms and retains partially visible extents with either globe visibility', async () => {
+  for (const globeShow of [true, false]) {
+    const sources = [];
+    const viewer = {
+      camera: { positionWC: Cesium.Cartesian3.fromDegrees(0, 0, 350) },
+      scene: {
+        globe: { show: globeShow },
+        preRender: new Cesium.Event(),
+        requestRender() {},
+      },
+      dataSources: {
+        async add(source) {
+          sources.push(source);
+        },
+        remove() {},
+      },
+    };
+    const rendering = createCycloneRendering({ viewer, cesium: Cesium });
+    const at = (id, longitude) => ({
+      ...storm(),
+      id,
+      position: { longitude, latitude: 0 },
+      forecastPoints: [{ position: { longitude, latitude: 0 }, tauHours: 24 }],
+      track: {
+        type: 'LineString',
+        coordinates: [
+          [longitude, 0],
+          [longitude, 1],
+        ],
+      },
+      cone: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [longitude, 0],
+            [longitude + 1, 0],
+            [longitude, 1],
+            [longitude, 0],
+          ],
+        ],
+      },
+    });
+    await rendering.setSnapshot({
+      storms: [at('near', 0), at('far', 180), at('limb', 5)],
+    });
+    viewer.scene.preRender.raiseEvent();
+    const entities = sources[0].entities.values;
+    assert.ok(
+      entities
+        .filter((e) => e.id.startsWith('cyclone:near:'))
+        .every((e) => e.show),
+    );
+    assert.ok(
+      entities
+        .filter((e) => e.id.startsWith('cyclone:far:'))
+        .every((e) => !e.show),
+    );
+    const limb = entities.filter((e) => e.id.startsWith('cyclone:limb:'));
+    assert.ok(limb.filter((e) => e.position).every((e) => !e.show));
+    assert.ok(limb.filter((e) => !e.position).every((e) => e.show));
+    rendering.destroy();
+    assert.equal(viewer.scene.preRender.numberOfListeners, 0);
+  }
 });
 
 test('picking accepts exact current owned entities, never prefixes or superseded identities', async () => {
