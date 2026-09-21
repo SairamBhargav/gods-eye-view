@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as Cesium from 'cesium';
 
 import { createWindRendering } from './rendering.js';
 
@@ -174,6 +175,9 @@ function harness({
     isDestroyed: () => false,
   };
   const cesium = {
+    GeographicTilingScheme: Cesium.GeographicTilingScheme,
+    Credit: Cesium.Credit,
+    Event: Cesium.Event,
     Cartesian3: { fromDegrees: (lon, lat) => ({ lon, lat }) },
     Ellipsoid: { WGS84: {} },
     Rectangle: { MAX_VALUE: {} },
@@ -943,7 +947,7 @@ for (const eventName of ['preRender', 'moveEnd']) {
 }
 
 
-test('scalar host falls back to globe and rehomes the retained imagery through map events', () => {
+test('scalar host replaces incompatible providers and retains imagery through no-host events', () => {
   const eventTarget = new EventTarget();
   let host;
   const h = harness({ eventTarget, getHost: () => host ?? { collection: h.viewer.imageryLayers, kind: 'globe' } });
@@ -956,6 +960,7 @@ test('scalar host falls back to globe and rehomes the retained imagery through m
   const items = [];
   const collection = {
     add(layer) { items.push(layer); },
+    addImageryProvider(provider) { const layer = { provider }; items.push(layer); return layer; },
     remove(layer, destroy) { items.splice(items.indexOf(layer), 1); if (destroy) layer.destroyed = true; },
     get length() { return items.length; },
     get: i => items[i],
@@ -964,18 +969,23 @@ test('scalar host falls back to globe and rehomes the retained imagery through m
   host = { collection, kind: 'tileset' };
   eventTarget.dispatchEvent(new Event('gev:map-stack-changed'));
   assert.equal(h.imagery.length, 0);
-  assert.deepEqual(items, [original]);
-  assert.equal(h.textures.length, 1, 'rehome reuses the scalar texture');
+  const tiled = items[0];
+  assert.notEqual(tiled, original);
+  assert.equal(tiled.provider.maximumLevel, 2);
+  assert.equal(h.removed[0].destroy, true);
+  assert.equal(h.textures.length, 2);
+  assert.equal(h.textures[1].width, 720);
+  assert.equal(h.textures[1].height, 362);
   host = { collection: null, kind: 'none' };
   eventTarget.dispatchEvent(new Event('gev:map-stack-changed'));
   assert.equal(items.length, 0);
   assert.equal(h.rendering.getDiagnostics().imageryError, 'Hidden by this map source · choose a globe map');
   host = { collection, kind: 'tileset' };
   h.rendering.rehome();
-  assert.deepEqual(items, [original]);
+  assert.deepEqual(items, [tiled]);
   assert.equal(h.rendering.getDiagnostics().imageryError, null);
   h.rendering.destroy();
-  assert.equal(original.destroyed, true);
+  assert.equal(tiled.destroyed, true);
   eventTarget.dispatchEvent(new Event('gev:map-stack-changed'));
   assert.equal(items.length, 0);
 });
@@ -995,3 +1005,49 @@ test('scalar installation with no host reports hidden and installs on restore', 
   assert.equal(h.rendering.getDiagnostics().imageryError, null);
   h.rendering.destroy();
 });
+
+for (const overlay of ['speed', 'temperature', 'pressure']) {
+  test(`${overlay} tileset alpha changes only on moveEnd, install or rehome in 0.1 steps`, () => {
+    const gpu = {
+      supported: () => true, setField: () => true, updateVisibility: () => true,
+      tick() {}, setOptions() {}, clear() {}, destroy() {},
+      getParticleCount: () => 1, getDiagnostics: () => ({ ready: true }),
+    };
+    let kind = 'tileset';
+    const h = harness({ createGpuRendering: () => gpu, getHost: () => ({ collection: h.viewer.imageryLayers, kind }) });
+    const camera = h.viewer.scene.camera;
+    const field = { ...FIELD, scalar: { kind: overlay, units: overlay === 'pressure' ? 'hPa' : '°C', values: Float32Array.of(overlay === 'pressure' ? 1013 : 20) } };
+    camera.positionCartographic.height = Math.sqrt(200_000 * 1_200_000);
+    h.rendering.attach();
+    h.rendering.setOptions({ overlay });
+    h.rendering.setField(field);
+    h.rendering.start();
+    const layer = h.imagery[0];
+    assert.equal(layer.provider.maximumLevel, 2);
+    assert.equal(layer.alpha, overlay === 'temperature' ? 0.5 : 0.4);
+    let writes = layer.alphaWrites;
+    camera.positionCartographic.height = 100_000;
+    h.preRender.emit();
+    h.rendering.setOptions({ paused: true });
+    assert.equal(layer.alphaWrites, writes, 'preRender and pause do not change tileset alpha');
+    camera.moveEnd.emit();
+    assert.equal(layer.alpha, 0);
+    assert.equal(layer.show, false);
+    camera.positionCartographic.height = Math.sqrt(200_000 * 1_200_000);
+    camera.moveEnd.emit();
+    writes = layer.alphaWrites;
+    camera.positionCartographic.height *= 1.01;
+    camera.moveEnd.emit();
+    assert.equal(layer.alphaWrites, writes, 'same quantization bucket avoids draw-command rebuilds');
+    camera.positionCartographic.height = 1_200_000;
+    h.rendering.rehome();
+    assert.equal(layer.alpha, overlay === 'temperature' ? 1 : 0.9);
+    kind = 'globe';
+    h.rendering.rehome();
+    assert.notEqual(h.imagery[0], layer);
+    assert.equal(h.imagery[0].provider.options.tileWidth, 360);
+    assert.equal(h.imagery[0].alpha, overlay === 'temperature' ? 1 : 0.85);
+    h.rendering.destroy();
+    assert.equal(camera.moveEnd.size, 0);
+  });
+}

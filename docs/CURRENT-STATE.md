@@ -16,7 +16,11 @@ in hPa. Optional companion fields come from the same model run/forecast as the
 wind. A missing or invalid companion leaves usable wind visible and identifies
 the selected field as unavailable. The color texture drapes the globe basemap or
 the active photorealistic 3D Tiles. With GPU rendering, the color field fades out
-below ~1,200 km camera height and is hidden at or below 200 km.
+below ~1,200 km camera height and is hidden at or below 200 km. Globe imagery
+keeps the smooth per-frame fade. On 3D Tiles, alpha is quantized to 0.1 steps
+and updated only on camera move end, installation or rehome, limiting Cesium's
+model draw-command rebuilds. The tileset field uses a 720×362 raster served as
+256 px geographic tiles with maximum level 2; the globe keeps its single image.
 GPU wind curves follow the sampled forecast field. Their 12 km display lift is a
 rendering aid; the source remains 10 m wind,
 not a forecast at the displayed height or a street-level observation.
@@ -47,7 +51,20 @@ observation layers provide radar and satellite history; none claims measured clo
 Weather imagery drapes onto the active globe or photorealistic 3D Tiles, retaining
 its observation when the map source changes. A map without an imagery host pauses
 history while metadata refresh continues, then resumes when a host returns.
-Infrared draws warm clear-sky pixels transparent and shows cold cloud tops.
+Infrared pixels below a brightness threshold are drawn transparent so bright
+(cold) areas stand out; this is a display filter, not a cloud mask.
+Cesium 1.138's `ImageryPipelineStage.js` honours `ImageryLayer.colorToAlpha`
+in draping: it compares the maximum channel difference from black with the
+threshold after sRGB-to-linear conversion. `ModelImagery.js` tracks changes to
+that color. Both hosts use the layer filter; no canvas filter is needed.
+`ModelPrimitiveImagery.js` uses `ImageryCoverage._clampImageryLevel`, which clamps
+to `maximumLevel - 1`. Global infrared therefore uses 256 px geographic tiles
+with maximum level 3 on 3D Tiles. This accepts possible per-tile contrast seams;
+the globe keeps the fixed 2048×1024 mosaic to avoid those seams. Host changes
+replace incompatible providers while retaining the observation time.
+Throttled weather requests (429/503) get at most three retries per tile within
+a frame, independent of other tiles; successful requests reset only their own
+counter, and closing a frame clears its retry state.
 Mapped.earth's public bundles informed the rendering study; no code or assets
 were reused, and the study found no application licence granting reuse. Native
 hardware GPU behavior remains unverified; software-rendered checks do not

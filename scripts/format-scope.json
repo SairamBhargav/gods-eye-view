@@ -742,6 +742,8 @@
   "src/layers/weather/rendering.js",
   "src/layers/weather/source.js",
   "src/layers/weather/weather.test.mjs",
+  "src/layers/weather/rasterTiles.test.mjs",
+  "src/layers/wind/rendering.test.mjs",
   "src/layers/weather/source.test.mjs",
   "src/data/weatherProxy.test.mjs",
   "server/providers/weather.js",

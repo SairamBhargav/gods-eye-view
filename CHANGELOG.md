@@ -3,12 +3,17 @@
 ## Unreleased — weather review
 
 - Drape weather imagery and wind color fields onto photorealistic 3D Tiles.
-- Show infrared cloud tops only, with warm clear-sky pixels drawn transparent.
-- Retry throttled weather tiles instead of immediately failing a frame.
+- Draw infrared pixels below a brightness threshold transparent so bright (cold)
+  areas stand out. This is a display filter, not a cloud mask.
+- Retry throttled weather tiles up to three times per tile.
+- Use bounded tiles for global infrared and wind scalar fields on 3D Tiles,
+  avoiding Cesium 1.138's level-zero coverage failure.
 
 - Cull regional wind batches per frame, fade curves below 60 km, and stop idle
   rendering when no curve is visible.
 - Fade the wind color field below ~1,200 km camera height and hide it at 200 km.
+  On 3D Tiles, update alpha in 0.1 steps only at camera move end or installation;
+  globe imagery keeps its smooth per-frame fade.
 
 - Hide cyclone markers, labels, tracks and cones beyond the horizon on every map source.
 - Reserve stable weather status space and coalesce panel refreshes per frame.

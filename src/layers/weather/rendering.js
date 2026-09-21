@@ -3,6 +3,8 @@ import { orderWeatherImagery } from './imageryOrder.js';
 import { NO_IMAGERY_HOST } from './imageryHost.js';
 
 const INFRARED_COLOR_TO_ALPHA_THRESHOLD = 0.55;
+// Bounded display detail for the hourly, approximately 3 km global product.
+const GLOBAL_TILE_MAXIMUM_LEVEL = 3;
 
 /** Own at most a displayed and a staging frame. Use native Cesium tile scheduling,
  * projection and texture disposal; the application clock is never touched. */
@@ -29,6 +31,7 @@ export function createWeatherRendering({
     clearTimeout(frame.timeout);
     for (const request of frame.requests) request.cancel?.();
     frame.requests.clear();
+    frame.retries.clear();
     const collection = frame.collection;
     if (
       collection &&
@@ -45,8 +48,8 @@ export function createWeatherRendering({
     remove(previous);
     previous.resolve(false);
   }
-  function rehome() {
-    const { collection } = getHost();
+  function rehome(restage = true) {
+    const { collection, kind } = getHost();
     const changed =
       (current && current.collection !== collection) ||
       (incoming && incoming.collection !== collection);
@@ -60,32 +63,40 @@ export function createWeatherRendering({
         orderWeatherImagery(collection, current.layer, current.priority);
       }
     }
+    if (current && kind !== 'none') {
+      if (current.product === 'clouds' && current.kind !== kind) {
+        if (restage) void api.setFrame(current.snapshot, current.time);
+      } else current.kind = kind;
+    }
     viewer.scene.requestRender();
     return true;
   }
-  return {
+  const api = {
     rehome,
     async setFrame(snapshot, time, { signal } = {}) {
       signal?.throwIfAborted();
-      rehome();
+      rehome(false);
       cancelIncoming();
       const { collection, kind } = getHost();
       if (kind === 'none') return false;
-      if (current?.time === time && current.product === snapshot.product)
+      if (current?.time === time && current.product === snapshot.product && current.kind === kind)
         return true;
       lastError = null;
       const { west, south, east, north } = snapshot.bounds;
       const rectangle = cesium.Rectangle.fromDegrees(west, south, east, north);
       const global = snapshot.product === 'clouds';
+      const singleImage = global && kind === 'globe';
       // NOAA's global reflectance changes contrast with the request extent.
       // One bounded full-mosaic image avoids artificial tile-brightness seams.
+      // Tileset draping clamps levels to maximumLevel - 1, so it needs tiles.
+      // That host accepts per-tile contrast seams in exchange for coverage.
       // UrlTemplate retains Cesium's native Request cancellation and textures.
       const provider = new cesium.UrlTemplateImageryProvider({
-        url: global
+        url: singleImage
           ? weatherImageUrl(time)
           : weatherTileUrl(snapshot.product, time),
         tilingScheme: new cesium.GeographicTilingScheme(
-          global
+          singleImage
             ? {
                 rectangle,
                 numberOfLevelZeroTilesX: 1,
@@ -94,9 +105,9 @@ export function createWeatherRendering({
             : undefined,
         ),
         rectangle,
-        tileWidth: global ? 2048 : 256,
-        tileHeight: global ? 1024 : 256,
-        maximumLevel: global ? 0 : 6,
+        tileWidth: singleImage ? 2048 : 256,
+        tileHeight: singleImage ? 1024 : 256,
+        maximumLevel: singleImage ? 0 : global ? GLOBAL_TILE_MAXIMUM_LEVEL : 6,
         enablePickFeatures: false,
         // Verbose source courtesy text belongs in Cesium's attribution popup.
         // Product identity remains visible in the row and Weather summary.
@@ -110,6 +121,7 @@ export function createWeatherRendering({
         ),
       });
       const frame = {
+        snapshot,
         time,
         collection,
         kind,
@@ -121,6 +133,7 @@ export function createWeatherRendering({
               : 1,
         product: snapshot.product,
         requests: new Set(),
+        retries: new Map(),
         deferred: new Set(),
         pending: 0,
         loaded: 0,
@@ -147,6 +160,7 @@ export function createWeatherRendering({
         if (request) frame.requests.add(request);
         return Promise.resolve(result)
           .then((image) => {
+            frame.retries.delete(tileKey);
             frame.loaded++;
             return image;
           })
@@ -161,7 +175,11 @@ export function createWeatherRendering({
         if (frame.closed) return;
         const status = error?.error?.statusCode;
         // Cesium retries synchronously after this event; no delay hook is exposed.
-        if ((status === 429 || status === 503) && error.timesRetried < 3) {
+        const tileKey = `${error.level}/${error.x}/${error.y}`;
+        const retries = frame.retries.get(tileKey) ?? 0;
+        error.retry = false;
+        if ((status === 429 || status === 503) && retries < 3) {
+          frame.retries.set(tileKey, retries + 1);
           error.retry = true;
           return;
         }
@@ -273,4 +291,5 @@ export function createWeatherRendering({
       };
     },
   };
+  return api;
 }

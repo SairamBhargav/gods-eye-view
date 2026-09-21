@@ -1,3 +1,4 @@
+import { createRasterTileProvider } from '../weather/rasterTiles.js';
 import { createWindRelief } from './relief.js';
 import { orderWeatherImagery } from '../weather/imageryOrder.js';
 import { NO_IMAGERY_HOST } from '../weather/imageryHost.js';
@@ -67,6 +68,7 @@ export function createWindRendering({
   let reducedMotion = false;
   let imagery = null;
   let imageryCollection = null;
+  let imageryKind = null;
   let imageryError = null;
   let imageryErrorRemove = null;
   let media = null;
@@ -280,9 +282,12 @@ export function createWindRendering({
     else if (imagery && !imagery.isDestroyed?.()) imagery.destroy?.();
     imagery = null;
     imageryCollection = null;
+    imageryKind = null;
   }
-  function updateImageryFade(camera) {
-    if (!imagery) return;
+  function updateImageryFade(camera, settled = false) {
+    // ModelImagery resets draw commands when alpha changes. Wait for moveEnd
+    // on tilesets; globe imagery keeps its smooth per-frame fade.
+    if (!imagery || !camera?.positionCartographic || (imageryKind === 'tileset' && !settled)) return;
     const height = camera.positionCartographic.height;
     const fade =
       height <= WIND_FIELD_FADE_LOW_METERS
@@ -292,9 +297,10 @@ export function createWindRendering({
           : Math.log(height / WIND_FIELD_FADE_LOW_METERS) /
             WIND_FIELD_LOG_RANGE;
     const baseAlpha = overlay === 'temperature' ? 1 : 0.85;
-    const alpha = baseAlpha * fade;
+    const smoothAlpha = baseAlpha * fade;
+    const alpha = imageryKind === 'tileset' ? Math.round(smoothAlpha * 10) / 10 : smoothAlpha;
     if (Math.abs(imagery.alpha - alpha) > 0.005) imagery.alpha = alpha;
-    const show = fade > 0;
+    const show = alpha > 0;
     if (imagery.show !== show) imagery.show = show;
   }
   function installImagery() {
@@ -307,16 +313,27 @@ export function createWindRendering({
       imageryError = NO_IMAGERY_HOST;
       return;
     }
-    const raster = createFieldRaster(snapshot, overlay);
+    const raster = kind === 'tileset'
+      ? createFieldRaster(snapshot, overlay, 720, 362)
+      : createFieldRaster(snapshot, overlay);
     if (!raster) {
       imageryError = `${overlay} field unavailable`;
       return;
     }
-    if (!collection || !cesium.SingleTileImageryProvider) {
+    if (!collection || (kind === 'globe' && !cesium.SingleTileImageryProvider)) {
       imageryError = 'Globe imagery unavailable';
       return;
     }
     try {
+      let provider;
+      if (kind === 'tileset') {
+        provider = createRasterTileProvider({
+          cesium,
+          raster,
+          credit: new cesium.Credit(snapshot.model === 'ifs' ? 'ECMWF IFS' : 'NOAA GFS', false),
+          createCanvas: () => document.createElement('canvas'),
+        });
+      } else {
       const texture = document.createElement('canvas');
       texture.width = raster.width;
       texture.height = raster.height;
@@ -324,19 +341,21 @@ export function createWindRendering({
       const pixels = ctx.createImageData(raster.width, raster.height);
       pixels.data.set(raster.rgba);
       ctx.putImageData(pixels, 0, 0);
-      const provider = new cesium.SingleTileImageryProvider({
+      provider = new cesium.SingleTileImageryProvider({
         url: texture.toDataURL('image/png'),
         tileWidth: raster.width,
         tileHeight: raster.height,
         rectangle: cesium.Rectangle.MAX_VALUE,
       });
+      }
       imagery = collection.addImageryProvider(provider);
       orderWeatherImagery(collection, imagery, 0);
       imageryCollection = collection;
+      imageryKind = kind;
       // Temperature colors carry quantitative meaning; double transparency
       // blends orange heat into blue ocean and obscures useful gradients.
       imagery.alpha = overlay === 'temperature' ? 1 : 0.85;
-      if (gpuActive) updateImageryFade(viewer.scene.camera);
+      if (gpuActive) updateImageryFade(viewer.scene.camera, true);
       imageryErrorRemove = provider.errorEvent?.addEventListener(() => {
         imageryError = 'Globe field image unavailable';
       });
@@ -350,6 +369,12 @@ export function createWindRendering({
   function rehome() {
     if (!snapshot || overlay === 'none') return;
     const { collection, kind } = getHost();
+    const wasHidden = imageryError === NO_IMAGERY_HOST;
+    if (imagery && kind !== 'none' && kind !== imageryKind) {
+      installImagery();
+      onStatusChange?.();
+      return;
+    }
     if (imagery && collection !== imageryCollection) {
       imageryCollection?.remove(imagery, false);
       imageryCollection = collection;
@@ -359,7 +384,7 @@ export function createWindRendering({
       }
       viewerReady()?.scene?.requestRender?.();
     }
-    const wasHidden = imageryError === NO_IMAGERY_HOST;
+    if (gpuActive && kind !== 'none') updateImageryFade(viewerReady()?.scene?.camera, true);
     if (kind === 'none') imageryError = NO_IMAGERY_HOST;
     else if (wasHidden) {
       imageryError = null;
@@ -436,6 +461,10 @@ export function createWindRendering({
     target.addEventListener(event, callback);
     removers.push(() => target.removeEventListener(event, callback));
   }
+  function cameraSettled() {
+    if (gpuActive) updateImageryFade(viewerReady()?.scene?.camera, true);
+    cameraMoved();
+  }
   function cameraMoved() {
     viewChanged();
     // A parked request-render scene may never run preRender until we wake it.
@@ -462,7 +491,7 @@ export function createWindRendering({
     const viewer = viewerReady();
     const camera = viewer?.scene?.camera;
     listenScene(viewer?.scene?.preRender, viewChanged);
-    listenScene(camera?.moveEnd, cameraMoved);
+    listenScene(camera?.moveEnd, cameraSettled);
   }
   function detachListeners() {
     for (const remove of removers) remove();

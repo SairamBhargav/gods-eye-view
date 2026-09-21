@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWeatherRendering } from './rendering.js';
 import { createWeatherLayer } from './index.js';
+import * as Cesium from 'cesium';
 import { Color, ImageryLayerCollection, GeographicTilingScheme } from 'cesium';
 import { NO_IMAGERY_HOST } from './imageryHost.js';
 import { orderWeatherImagery } from './imageryOrder.js';
@@ -860,7 +861,7 @@ for (const statusCode of [429, 503]) {
     h.providers[0].response.reject(new Error('throttled'));
     await assert.rejects(rejected, /throttled/);
     for (let timesRetried = 0; timesRetried < 3; timesRetried++) {
-      const error = { error: { statusCode }, timesRetried, retry: false };
+      const error = { error: { statusCode }, x: 0, y: 0, level: 0, timesRetried, retry: false };
       h.providers[0].errorEvent.emit(error);
       assert.equal(error.retry, true);
       assert.equal(h.rendering.getDiagnostics().error, null);
@@ -876,7 +877,7 @@ for (const statusCode of [429, 503]) {
     assert.equal(await stage, true);
     const exhausted = h.rendering.setFrame(snapshot, times[1]);
     const error = { error: { statusCode }, timesRetried: 3, retry: false };
-    h.providers[1].errorEvent.emit(error);
+    for (let i = 0; i < 4; i++) h.providers[1].errorEvent.emit(error);
     h.settle();
     assert.equal(error.retry, false);
     assert.equal(await exhausted, false);
@@ -954,3 +955,84 @@ test('host restore through update stages latest after a no-host start', async ()
   assert.notEqual(h.layer.getRowControls().summary.status, NO_IMAGERY_HOST);
   h.layer.destroy();
 });
+
+for (const kind of ['globe', 'tileset']) {
+  test(`real Cesium global infrared provider supports the ${kind} host`, async () => {
+    const collection = new Cesium.ImageryLayerCollection();
+    const h = renderingHarness({ cesium: Cesium, getHost: () => ({ collection, kind }) });
+    const stage = h.rendering.setFrame({ ...snapshot, product: 'clouds', bounds: { west: -180, south: -60, east: 180, north: 60 } }, times[0]);
+    const layer = collection.get(0);
+    const provider = layer.imageryProvider;
+    assert.ok(provider instanceof Cesium.UrlTemplateImageryProvider);
+    assert.ok(provider.tilingScheme instanceof Cesium.GeographicTilingScheme);
+    assert.equal(provider.maximumLevel, kind === 'tileset' ? 3 : 0);
+    assert.equal(provider.tileWidth, kind === 'tileset' ? 256 : 2048);
+    assert.equal(provider.tileHeight, kind === 'tileset' ? 256 : 1024);
+    assert.equal(provider.tilingScheme.getNumberOfXTilesAtLevel(0), kind === 'tileset' ? 2 : 1);
+    assert.match(provider.url, kind === 'tileset' ? /weather\/tile\?product=clouds/ : /weather\/image\?product=clouds/);
+    assert.equal(layer.colorToAlphaThreshold, 0.55);
+    assert.ok(Cesium.Color.equals(layer.colorToAlpha, Cesium.Color.BLACK));
+    h.rendering.clear();
+    assert.equal(await stage, false);
+  });
+}
+
+test('global infrared rehomes by staging a compatible provider at the retained time', async () => {
+  let now = 0;
+  const globe = new ImageryLayerCollection();
+  let host = { collection: globe, kind: 'globe' };
+  const h = renderingHarness({ getHost: () => host, now: () => now });
+  const stage = h.rendering.setFrame({ ...snapshot, product: 'clouds' }, times[0]);
+  h.settle();
+  assert.equal(await stage, true);
+  const tiles = new ImageryLayerCollection();
+  host = { collection: tiles, kind: 'tileset' };
+  h.rendering.rehome();
+  const provider = h.providers.at(-1);
+  assert.equal(provider.options.maximumLevel, 3);
+  assert.equal(h.rendering.getDiagnostics().time, times[0]);
+  assert.equal(tiles.length, 2);
+  provider.response = { promise: Promise.resolve({}) };
+  await provider.requestImage(0, 0, 0);
+  now = 250;
+  h.settle();
+  assert.equal(tiles.length, 1);
+  assert.equal(h.rendering.getDiagnostics().loading, false);
+  host = { collection: null, kind: 'none' };
+  h.rendering.rehome();
+  host = { collection: globe, kind: 'globe' };
+  h.rendering.rehome();
+  assert.equal(h.providers.at(-1).options.maximumLevel, 0);
+  h.settle();
+  assert.equal(h.rendering.getDiagnostics().time, times[0]);
+  assert.equal(globe.length, 1);
+  h.rendering.clear();
+});
+
+for (const statusCode of [429, 503]) {
+  test(`${statusCode} retries belong to tiles, regardless of the layer-wide counter`, async () => {
+    const h = renderingHarness();
+    const stage = h.rendering.setFrame(snapshot, times[0]);
+    const provider = h.providers[0];
+    const fail = (x, timesRetried = 0) => {
+      const error = { x, y: 0, level: 2, timesRetried, error: { statusCode } };
+      provider.errorEvent.emit(error);
+      return error.retry;
+    };
+    // A shared counter may exceed three even though these are first failures.
+    for (let x = 0; x < 4; x++) assert.equal(fail(x, x + 4), true);
+    provider.response = { promise: Promise.resolve({}) };
+    await provider.requestImage(0, 0, 2);
+    for (let i = 0; i < 3; i++) assert.equal(fail(0), true, 'own success reset the count');
+    for (let i = 0; i < 2; i++) {
+      await provider.requestImage(2, 0, 2);
+      assert.equal(fail(1), true);
+    }
+    await provider.requestImage(3, 0, 2);
+    assert.equal(fail(1), false, 'four failures exhaust this tile despite other successes');
+    h.settle();
+    assert.equal(await stage, false);
+    assert.equal(provider.errorEvent.size, 0);
+    h.rendering.clear();
+  });
+}
