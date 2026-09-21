@@ -132,7 +132,19 @@ function harness({
   const removed = [];
   const imageryLayers = {
     addImageryProvider(provider) {
-      const layer = { provider };
+      let alpha = 1;
+      const layer = {
+        provider,
+        show: true,
+        alphaWrites: 0,
+        get alpha() {
+          return alpha;
+        },
+        set alpha(value) {
+          alpha = value;
+          this.alphaWrites++;
+        },
+      };
       imagery.push(layer);
       return layer;
     },
@@ -390,6 +402,105 @@ test('scalar imagery builds once, survives pause, replaces cleanly, and releases
   h.rendering.clear();
   assert.equal(h.imagery.length, 0);
   assert.ok(h.removed.every((item) => item.destroy));
+  h.rendering.destroy();
+});
+
+for (const overlay of ['speed', 'pressure', 'temperature']) {
+  test(`${overlay} imagery fades with log camera height and resumes from idle`, () => {
+    const gpu = {
+      supported: () => true,
+      setField: () => true,
+      updateVisibility: (camera) => camera.positionCartographic.height > 15000,
+      tick() {},
+      setOptions() {},
+      clear() {},
+      destroy() {},
+      getParticleCount: () => 1,
+      getDiagnostics: () => ({ ready: true }),
+    };
+    const h = harness({ createGpuRendering: () => gpu });
+    const camera = h.viewer.scene.camera;
+    const baseAlpha = overlay === 'temperature' ? 1 : 0.85;
+    const snapshot = {
+      grid: FIELD,
+      u: FIELD.u,
+      v: FIELD.v,
+      scalar: {
+        kind: overlay,
+        units: overlay === 'pressure' ? 'hPa' : '°C',
+        values: Float32Array.from([overlay === 'pressure' ? 1013 : 20]),
+      },
+    };
+    camera.positionCartographic.height = 17_368_000;
+    h.rendering.attach();
+    h.rendering.setOptions({ overlay });
+    h.rendering.setField(snapshot);
+    h.rendering.start();
+    let layer = h.imagery[0];
+    assert.equal(layer.alpha, baseAlpha);
+    assert.equal(layer.show, true);
+    const writes = layer.alphaWrites;
+    h.preRender.emit();
+    camera.changed.emit();
+    camera.moveEnd.emit();
+    assert.equal(layer.alphaWrites, writes, 'unchanged height never writes alpha');
+
+    camera.positionCartographic.height = Math.sqrt(200_000 * 1_200_000);
+    h.preRender.emit();
+    assert.ok(layer.alpha > 0 && layer.alpha < baseAlpha);
+    assert.ok(Math.abs(layer.alpha - baseAlpha / 2) < 1e-12, 'log midpoint');
+    const midpointWrites = layer.alphaWrites;
+    h.preRender.emit();
+    camera.positionCartographic.height *= 1.001;
+    h.preRender.emit();
+    assert.equal(layer.alphaWrites, midpointWrites, 'sub-0.005 changes are skipped');
+    camera.positionCartographic.height *= 1.02;
+    h.preRender.emit();
+    assert.equal(layer.alphaWrites, midpointWrites + 1, 'larger changes write alpha');
+
+    camera.positionCartographic.height = 100_000;
+    h.preRender.emit();
+    assert.equal(layer.alpha, 0);
+    assert.equal(layer.show, false);
+    h.rendering.setField({ ...snapshot });
+    assert.notEqual(h.imagery[0], layer, 'reinstall replaces the layer');
+    layer = h.imagery[0];
+    assert.equal(layer.alpha, 0, 'reinstall at low height starts transparent');
+    assert.equal(layer.show, false, 'reinstall at low height starts hidden');
+
+    for (const eventName of ['changed', 'moveEnd']) {
+      camera.positionCartographic.height = 1200;
+      h.preRender.emit();
+      assert.equal(h.pending.size, 0, 'street-level flow is parked');
+      camera.positionCartographic.height = 1_200_000;
+      camera[eventName].emit();
+      assert.equal(layer.alpha, baseAlpha, 'camera event restores full alpha');
+      assert.equal(layer.show, true, 'camera event unhides imagery without preRender');
+      camera.positionCartographic.height = 200_000;
+      camera[eventName].emit();
+      assert.equal(layer.alpha, 0, 'lower bound is transparent');
+      assert.equal(layer.show, false);
+    }
+    h.rendering.setOptions({ paused: true });
+    camera.positionCartographic.height = 1_200_000;
+    h.preRender.emit();
+    assert.equal(layer.alpha, baseAlpha, 'paused imagery still follows camera height');
+    assert.equal(h.pending.size, 0);
+    assert.equal(h.textures.length, 2, 'height changes never rebuild the texture');
+    h.rendering.destroy();
+  });
+}
+
+test('canvas fallback retains scalar base alpha at low camera height', () => {
+  const h = harness();
+  h.viewer.scene.camera.positionCartographic.height = 1200;
+  h.rendering.attach();
+  h.rendering.setOptions({ overlay: 'speed' });
+  h.rendering.setField({ grid: FIELD, u: FIELD.u, v: FIELD.v });
+  h.rendering.start();
+  h.preRender.emit();
+  assert.equal(h.imagery[0].alpha, 0.85);
+  assert.equal(h.imagery[0].show, true);
   h.rendering.destroy();
 });
 

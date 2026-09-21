@@ -15,8 +15,10 @@ Temperature is air temperature at 2 m in °C; pressure is mean sea-level pressur
 in hPa. Optional companion fields come from the same model run/forecast as the
 wind. A missing or invalid companion leaves usable wind visible and identifies
 the selected field as unavailable. The color texture drapes the globe basemap;
-photorealistic 3D tiles may cover it. GPU wind curves follow the sampled forecast
-field. Their 12 km display lift is a rendering aid; the source remains 10 m wind,
+photorealistic 3D tiles may cover it. With GPU rendering, the color field fades out
+below ~1,200 km camera height and is hidden at or below 200 km.
+GPU wind curves follow the sampled forecast field. Their 12 km display lift is a
+rendering aid; the source remains 10 m wind,
 not a forecast at the displayed height or a street-level observation.
 
 The renderer owns field installation, scalar imagery and the animation lifecycle.

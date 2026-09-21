@@ -8,6 +8,12 @@ import {
   windTrailColor,
 } from './fields.js';
 
+const WIND_FIELD_FADE_HIGH_METERS = 1_200_000;
+const WIND_FIELD_FADE_LOW_METERS = 200_000;
+const WIND_FIELD_LOG_RANGE = Math.log(
+  WIND_FIELD_FADE_HIGH_METERS / WIND_FIELD_FADE_LOW_METERS,
+);
+
 // Snapshots own immutable decoded arrays. Compare their contents, not grid URLs
 // (which include the scalar overlay) or only cycle IDs (which can be revised).
 // This bounded scan runs on acquisition, never in the animation loop.
@@ -267,6 +273,22 @@ export function createWindRendering({
     imagery = null;
     imageryCollection = null;
   }
+  function updateImageryFade(camera) {
+    if (!imagery) return;
+    const height = camera.positionCartographic.height;
+    const fade =
+      height <= WIND_FIELD_FADE_LOW_METERS
+        ? 0
+        : height >= WIND_FIELD_FADE_HIGH_METERS
+          ? 1
+          : Math.log(height / WIND_FIELD_FADE_LOW_METERS) /
+            WIND_FIELD_LOG_RANGE;
+    const baseAlpha = overlay === 'temperature' ? 1 : 0.85;
+    const alpha = baseAlpha * fade;
+    if (Math.abs(imagery.alpha - alpha) > 0.005) imagery.alpha = alpha;
+    const show = fade > 0;
+    if (imagery.show !== show) imagery.show = show;
+  }
   function installImagery() {
     removeImagery();
     imageryError = null;
@@ -302,6 +324,7 @@ export function createWindRendering({
       // Temperature colors carry quantitative meaning; double transparency
       // blends orange heat into blue ocean and obscures useful gradients.
       imagery.alpha = overlay === 'temperature' ? 1 : 0.85;
+      if (gpuActive) updateImageryFade(viewer.scene.camera);
       imageryErrorRemove = provider.errorEvent?.addEventListener(() => {
         imageryError = 'Globe field image unavailable';
       });
@@ -316,6 +339,7 @@ export function createWindRendering({
   function viewChanged() {
     if (gpuActive) {
       const viewer = viewerReady();
+      if (viewer) updateImageryFade(viewer.scene.camera);
       const narrow = (viewer?.scene?.canvas?.clientWidth || 800) < 700;
       let visibilityUpdated = false;
       if (running && field && !hidden() && narrow !== gpuNarrow) {
@@ -362,6 +386,7 @@ export function createWindRendering({
     if (!running || !field || hidden()) return;
     const viewer = viewerReady();
     if (gpuActive) {
+      if (viewer) updateImageryFade(viewer.scene.camera);
       gpuVisible = viewer ? gpu.updateVisibility(viewer.scene.camera) : false;
       if (gpuVisible) {
         gpu.tick(flowTime);

@@ -4,6 +4,7 @@
 
 - Cull regional wind batches per frame, fade curves below 60 km, and stop idle
   rendering when no curve is visible.
+- Fade the wind color field below ~1,200 km camera height and hide it at 200 km.
 
 - Reserve stable weather status space and coalesce panel refreshes per frame.
 
