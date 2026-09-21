@@ -6,6 +6,7 @@ export const WIND_PATH_LIMIT = 7200;
 export const WIND_NARROW_PATH_LIMIT = 1200;
 export const WIND_PATH_STEPS = 16;
 export const WIND_DISPLAY_HEIGHT_METERS = 12000;
+export const WIND_CELL_DEGREES = 30;
 const DEGREE_METERS = 111320;
 const GOLDEN_ANGLE = 137.50776405003785;
 
@@ -107,4 +108,30 @@ export function bakeWindStreamlines(
     });
   }
   return paths;
+}
+
+/** Group baked paths by their middle coordinate, preserving path and cell order. */
+export function groupWindPaths(paths, cellDegrees = WIND_CELL_DEGREES) {
+  if (!Number.isFinite(cellDegrees) || cellDegrees <= 0 || cellDegrees > 180)
+    throw new RangeError('Wind cell size must be between 0 and 180 degrees');
+  const columns = Math.ceil(360 / cellDegrees);
+  const rows = Math.ceil(180 / cellDegrees);
+  const cells = new Map();
+  for (const path of paths) {
+    const [lon, lat] =
+      path.coordinates[Math.floor(path.coordinates.length / 2)];
+    const column = Math.floor((normalizeLongitude(lon) + 180) / cellDegrees);
+    const row = Math.min(
+      rows - 1,
+      Math.max(0, Math.floor((lat + 90) / cellDegrees)),
+    );
+    const id = row * columns + column;
+    let cell = cells.get(id);
+    if (!cell) {
+      cell = { id, paths: [] };
+      cells.set(id, cell);
+    }
+    cell.paths.push(path);
+  }
+  return [...cells.values()];
 }

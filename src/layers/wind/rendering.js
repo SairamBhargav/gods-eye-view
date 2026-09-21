@@ -63,6 +63,7 @@ export function createWindRendering({
   let painted = 0;
   const gpu = createGpuRendering({ cesium, getViewer });
   let gpuActive = false;
+  let gpuVisible = false;
   let reportedGpuReady = null;
   let gpuNarrow = false;
   let flowTime = 0;
@@ -97,7 +98,15 @@ export function createWindRendering({
     frame = null;
   }
   function schedule() {
-    if (running && field && canvas && !hidden() && !still() && frame === null)
+    if (
+      running &&
+      field &&
+      canvas &&
+      !hidden() &&
+      !still() &&
+      (!gpuActive || gpuVisible) &&
+      frame === null
+    )
       frame = globalThis.requestAnimationFrame(draw);
   }
   function clearPixels() {
@@ -308,6 +317,7 @@ export function createWindRendering({
     if (gpuActive) {
       const viewer = viewerReady();
       const narrow = (viewer?.scene?.canvas?.clientWidth || 800) < 700;
+      let visibilityUpdated = false;
       if (running && field && !hidden() && narrow !== gpuNarrow) {
         gpuNarrow = narrow;
         gpuActive = gpu.setField(field);
@@ -316,6 +326,15 @@ export function createWindRendering({
           seed(viewer.scene, makeOccluder(viewer.scene));
         }
         motionChanged();
+        visibilityUpdated = true;
+      }
+      if (gpuActive && viewer && !visibilityUpdated) {
+        gpuVisible = gpu.updateVisibility(viewer.scene.camera);
+        if (gpuVisible) schedule();
+        else {
+          cancel();
+          lastTime = null;
+        }
       }
       const ready = gpuActive ? gpu.getDiagnostics().ready : null;
       if (ready !== reportedGpuReady) {
@@ -343,9 +362,12 @@ export function createWindRendering({
     if (!running || !field || hidden()) return;
     const viewer = viewerReady();
     if (gpuActive) {
-      gpu.tick(flowTime);
-      viewer?.scene?.requestRender?.();
-      schedule();
+      gpuVisible = viewer ? gpu.updateVisibility(viewer.scene.camera) : false;
+      if (gpuVisible) {
+        gpu.tick(flowTime);
+        viewer.scene.requestRender();
+        schedule();
+      }
       return;
     }
     if (still() && viewer) paint(viewer, 0, true);
@@ -356,22 +378,40 @@ export function createWindRendering({
     target.addEventListener(event, callback);
     removers.push(() => target.removeEventListener(event, callback));
   }
+  function cameraMoved() {
+    viewChanged();
+    // A parked request-render scene may never run preRender until we wake it.
+    if (gpuActive && running && field && !hidden())
+      viewerReady()?.scene?.requestRender?.();
+  }
+  function listenScene(event, callback) {
+    if (!event?.addEventListener) return;
+    const remove = event.addEventListener(callback);
+    removers.push(
+      typeof remove === 'function'
+        ? remove
+        : () => event.removeEventListener(callback),
+    );
+  }
   function attachListeners() {
     if (removers.length) return;
     media = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null;
     reducedMotion = media?.matches === true;
     listen(media, 'change', motionChanged);
     listen(globalThis.document, 'visibilitychange', motionChanged);
-    listen(globalThis, 'resize', viewChanged);
+    listen(globalThis, 'resize', cameraMoved);
     const viewer = viewerReady();
-    const event = viewer?.scene?.preRender ?? viewer?.scene?.camera?.changed;
-    if (event?.addEventListener) {
-      const remove = event.addEventListener(viewChanged);
-      removers.push(
-        typeof remove === 'function'
-          ? remove
-          : () => event.removeEventListener(viewChanged),
-      );
+    const camera = viewer?.scene?.camera;
+    listenScene(viewer?.scene?.preRender, viewChanged);
+    listenScene(camera?.changed, cameraMoved);
+    listenScene(camera?.moveEnd, cameraMoved);
+    if (camera) {
+      const previous = camera.percentageChanged;
+      camera.percentageChanged = 0.01;
+      removers.push(() => {
+        if (camera.percentageChanged === 0.01)
+          camera.percentageChanged = previous;
+      });
     }
   }
   function detachListeners() {
@@ -489,6 +529,10 @@ export function createWindRendering({
   function draw(time) {
     frame = null;
     if (!running || !field || hidden() || still()) return;
+    if (gpuActive && !gpuVisible) {
+      lastTime = null;
+      return;
+    }
     const viewer = viewerReady();
     if (!viewer) return;
     try {
@@ -604,6 +648,7 @@ export function createWindRendering({
       gpu.clear();
       relief.clear();
       gpuActive = false;
+      gpuVisible = false;
       reportedGpuReady = null;
       flowTime = 0;
       removeImagery();

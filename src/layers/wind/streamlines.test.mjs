@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   bakeWindStreamlines,
+  groupWindPaths,
+  WIND_CELL_DEGREES,
   WIND_PATH_LIMIT,
   WIND_PATH_STEPS,
 } from './streamlines.js';
@@ -73,4 +75,48 @@ test('midpoint integration bends paths with a changing northward component', () 
   assert.equal(middle[0], 0);
   assert.ok(path.coordinates[0][1] > middle[1]);
   assert.ok(path.coordinates.at(-1)[1] > middle[1]);
+});
+
+test('regional grouping preserves every baked path and ordering within each cell', () => {
+  const paths = bakeWindStreamlines(field());
+  const before = structuredClone(paths);
+  const groups = groupWindPaths(paths);
+  assert.equal(WIND_CELL_DEGREES, 30);
+  assert.equal(groups.length, 72);
+  assert.deepEqual(paths, before, 'grouping leaves the bake untouched');
+  const grouped = groups.flatMap((cell) => cell.paths);
+  assert.equal(grouped.length, paths.length);
+  assert.equal(new Set(grouped).size, paths.length);
+  for (const cell of groups) {
+    assert.deepEqual(
+      cell.paths,
+      paths.filter((path) => cell.paths.includes(path)),
+    );
+  }
+  assert.deepEqual(groups, groupWindPaths(paths));
+  assert.deepEqual(groupWindPaths([]), []);
+});
+
+test('grouping uses the middle coordinate, wraps longitude and clamps polar cell edges', () => {
+  const path = (lon, lat) => ({
+    coordinates: [
+      [-15, -15],
+      [lon, lat],
+      [150, 80],
+    ],
+  });
+  const a = path(-180, -90),
+    b = path(180, -90),
+    c = path(540, -90);
+  const north = path(179.9, 90),
+    boundary = path(-150, -60);
+  const groups = groupWindPaths([a, north, boundary, b, c]);
+  assert.deepEqual(groups, [
+    { id: 0, paths: [a, b, c] },
+    { id: 71, paths: [north] },
+    { id: 13, paths: [boundary] },
+  ]);
+  assert.equal(groupWindPaths([a, north], 90).length, 2);
+  for (const size of [0, -30, NaN, Infinity, 181])
+    assert.throws(() => groupWindPaths([], size), RangeError);
 });

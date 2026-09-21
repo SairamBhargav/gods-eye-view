@@ -147,7 +147,13 @@ function harness({
     imageryLayers,
     scene: {
       canvas,
-      camera: { positionWC: {} },
+      camera: {
+        positionWC: {},
+        positionCartographic: { height: 1e6 },
+        changed: event(),
+        moveEnd: event(),
+        percentageChanged: 0.5,
+      },
       preRender,
       requestRender() {},
     },
@@ -493,6 +499,7 @@ test('GPU flow uses one scheduler, rebuilds only across viewport budgets, and pa
     destroyed = 0;
   const gpu = {
     supported: () => true,
+    updateVisibility: () => true,
     setField(field) {
       assert.equal(field.nx, 1);
       builds++;
@@ -551,6 +558,7 @@ for (const paused of [false, true]) {
     let notifications = 0;
     const gpu = {
       supported: () => true,
+      updateVisibility: () => true,
       setField: () => {
         ready = false;
         return true;
@@ -612,8 +620,14 @@ test('scalar snapshots retain identical GPU wind geometry and animation phase', 
   const times = [];
   const gpu = {
     supported: () => true,
-    setField() { builds++; return true; },
-    tick(time) { times.push(time); },
+    updateVisibility: () => true,
+    setField() {
+      builds++;
+      return true;
+    },
+    tick(time) {
+      times.push(time);
+    },
     setOptions() {},
     clear() {},
     destroy() {},
@@ -622,10 +636,17 @@ test('scalar snapshots retain identical GPU wind geometry and animation phase', 
   };
   const h = harness({ createGpuRendering: () => gpu });
   const snapshot = (changes = {}) => ({
-    model: 'gfs', level: '10m', units: 'm/s',
-    cycle: { runIso: '2026-09-15T00:00:00Z', validIso: '2026-09-15T03:00:00Z', forecastHour: 3 },
+    model: 'gfs',
+    level: '10m',
+    units: 'm/s',
+    cycle: {
+      runIso: '2026-09-15T00:00:00Z',
+      validIso: '2026-09-15T03:00:00Z',
+      forecastHour: 3,
+    },
     grid: { ...FIELD },
-    u: Float32Array.from(FIELD.u), v: Float32Array.from(FIELD.v),
+    u: Float32Array.from(FIELD.u),
+    v: Float32Array.from(FIELD.v),
     ...changes,
   });
   h.rendering.attach();
@@ -635,14 +656,41 @@ test('scalar snapshots retain identical GPU wind geometry and animation phase', 
   h.callbacks.shift()(1016);
   const phase = times.at(-1);
   h.rendering.setOptions({ overlay: 'temperature' });
-  h.rendering.setField(snapshot({ scalar: { kind: 'temperature', units: '°C', values: Float32Array.from([24]) } }));
-  assert.equal(builds, 1, 'freshly decoded equal arrays reuse the worker-built primitive');
+  h.rendering.setField(
+    snapshot({
+      scalar: {
+        kind: 'temperature',
+        units: '°C',
+        values: Float32Array.from([24]),
+      },
+    }),
+  );
+  assert.equal(
+    builds,
+    1,
+    'freshly decoded equal arrays reuse the worker-built primitive',
+  );
   assert.equal(h.imagery.length, 1, 'new scalar field is still installed');
   h.callbacks.shift()(1032);
-  assert.ok(times.at(-1) >= phase, 'scalar acquisition does not reset travelling highlights');
-  h.rendering.setField(snapshot({ scalar: { kind: 'temperature', units: '°C', values: Float32Array.from([28]) } }));
+  assert.ok(
+    times.at(-1) >= phase,
+    'scalar acquisition does not reset travelling highlights',
+  );
+  h.rendering.setField(
+    snapshot({
+      scalar: {
+        kind: 'temperature',
+        units: '°C',
+        values: Float32Array.from([28]),
+      },
+    }),
+  );
   assert.equal(builds, 1, 'revised scalar alone does not rebuild flow');
-  assert.equal(h.imagery.length, 1, 'scalar replacement releases the prior image');
+  assert.equal(
+    h.imagery.length,
+    1,
+    'scalar replacement releases the prior image',
+  );
   h.rendering.clear();
   h.rendering.setField(snapshot());
   assert.equal(builds, 2, 'clear invalidates reuse');
@@ -652,7 +700,9 @@ test('scalar snapshots retain identical GPU wind geometry and animation phase', 
 for (const [label, change] of Object.entries({
   model: { model: 'ifs' },
   cycle: { cycle: { runIso: '2026-09-15T06:00:00Z' } },
-  validTime: { cycle: { runIso: '2026-09-15T00:00:00Z', validIso: '2026-09-15T04:00:00Z' } },
+  validTime: {
+    cycle: { runIso: '2026-09-15T00:00:00Z', validIso: '2026-09-15T04:00:00Z' },
+  },
   grid: { grid: { ...FIELD, lo1: -180 } },
   spacing: { grid: { ...FIELD, dx: 180 } },
   revisedU: { u: Float32Array.from([11]) },
@@ -663,18 +713,115 @@ for (const [label, change] of Object.entries({
     let builds = 0;
     const gpu = {
       supported: () => true,
-      setField() { builds++; return true; },
-      tick() {}, setOptions() {}, clear() {}, destroy() {},
+      updateVisibility: () => true,
+      setField() {
+        builds++;
+        return true;
+      },
+      tick() {},
+      setOptions() {},
+      clear() {},
+      destroy() {},
       getParticleCount: () => 1,
       getDiagnostics: () => ({ ready: true }),
     };
     const h = harness({ createGpuRendering: () => gpu });
-    const original = { model: 'gfs', level: '10m', grid: FIELD, u: FIELD.u, v: FIELD.v,
-      cycle: { runIso: '2026-09-15T00:00:00Z', validIso: '2026-09-15T03:00:00Z' } };
+    const original = {
+      model: 'gfs',
+      level: '10m',
+      grid: FIELD,
+      u: FIELD.u,
+      v: FIELD.v,
+      cycle: {
+        runIso: '2026-09-15T00:00:00Z',
+        validIso: '2026-09-15T03:00:00Z',
+      },
+    };
     h.rendering.attach();
     h.rendering.setField(original);
     h.rendering.setField({ ...original, ...change });
     assert.equal(builds, 2);
     h.rendering.destroy();
+  });
+}
+
+for (const eventName of ['changed', 'moveEnd']) {
+  test(`GPU height suspension resumes from camera ${eventName} without preRender`, () => {
+    const times = [];
+    let visible = false;
+    let inFrustum = true;
+    const gpu = {
+      supported: () => true,
+      setField: () => true,
+      updateVisibility(camera) {
+        visible = camera.positionCartographic.height > 15000 && inFrustum;
+        return visible;
+      },
+      tick(time) {
+        times.push(time);
+      },
+      setOptions() {},
+      clear() {},
+      destroy() {},
+      getParticleCount: () => 1,
+      getDiagnostics: () => ({ ready: true, visibleCells: Number(visible) }),
+    };
+    const h = harness({ createGpuRendering: () => gpu });
+    const camera = h.viewer.scene.camera;
+    camera.positionCartographic.height = 1200;
+    let renders = 0;
+    h.viewer.scene.requestRender = () => renders++;
+    h.rendering.attach();
+    h.rendering.setField(FIELD);
+    h.rendering.start();
+    h.preRender.emit();
+    assert.equal(h.pending.size, 0);
+    assert.equal(renders, 0);
+    assert.equal(times.length, 0);
+    assert.equal(camera.percentageChanged, 0.01);
+
+    camera.positionCartographic.height = 60000;
+    camera[eventName].emit();
+    assert.equal(renders, 1, 'camera event requests a single wake render');
+    assert.equal(h.pending.size, 1);
+    h.callbacks.shift()(16);
+    assert.equal(times.length, 1);
+    const phase = times.at(-1);
+    const queued = h.callbacks.shift();
+    camera.positionCartographic.height = 15000;
+    h.preRender.emit();
+    const parkedRenders = renders;
+    queued(100000);
+    assert.equal(h.pending.size, 0);
+    assert.equal(renders, parkedRenders);
+    assert.equal(times.length, 1, 'parked draw cannot tick or advance phase');
+
+    camera.positionCartographic.height = 60000;
+    camera[eventName].emit();
+    h.callbacks.shift()(200000);
+    assert.ok(
+      times.at(-1) - phase < 0.1,
+      'idle time does not jump animation phase',
+    );
+    inFrustum = false;
+    h.preRender.emit();
+    assert.equal(h.pending.size, 0, 'frustum-hidden cells also park');
+    inFrustum = true;
+    h.rendering.setOptions({ paused: true });
+    camera[eventName].emit();
+    assert.equal(h.pending.size, 0, 'camera events respect pause');
+    h.rendering.setOptions({ paused: false });
+    globalThis.document.hidden = true;
+    h.visibility.emit();
+    camera[eventName].emit();
+    assert.equal(h.pending.size, 0, 'camera events respect hidden documents');
+    globalThis.document.hidden = false;
+    h.visibility.emit();
+    assert.equal(h.pending.size, 1);
+    h.rendering.destroy();
+    assert.equal(h.pending.size, 0);
+    assert.equal(camera.changed.size, 0);
+    assert.equal(camera.moveEnd.size, 0);
+    assert.equal(camera.percentageChanged, 0.5);
   });
 }

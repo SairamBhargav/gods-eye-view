@@ -2,6 +2,9 @@
 
 ## Unreleased — weather review
 
+- Cull regional wind batches per frame, fade curves below 60 km, and stop idle
+  rendering when no curve is visible.
+
 - Reserve stable weather status space and coalesce panel refreshes per frame.
 
 - Add keyless NOAA/NHC cyclone advisory positions, coherent forecast tracks and

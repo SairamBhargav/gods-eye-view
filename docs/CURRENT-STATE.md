@@ -22,7 +22,10 @@ not a forecast at the displayed height or a street-level observation.
 The renderer owns field installation, scalar imagery and the animation lifecycle.
 It bakes at most 7,200 curves (1,200 below 700 px) with at most 33 geographic points each on the CPU
 when installing a wind field, then advances a GPU phase along those curves
-without CPU projection of every point on every frame. A canvas renderer remains
+without CPU projection of every point on every frame. Regional 30° batches are
+culled against the horizon and view frustum each frame, including when the globe
+is hidden; curves fade below 60 km and disappear at 15 km. Animation stops when
+no batch is visible and resumes on camera events. A canvas renderer remains
 available as a fallback. Pause and reduced-motion mode show a static flow view
 without an idle animation loop; hidden tabs suspend animation, and
 disable/destruction releases owned rendering

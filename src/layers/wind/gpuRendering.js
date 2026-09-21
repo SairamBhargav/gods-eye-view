@@ -1,9 +1,13 @@
 import {
   bakeWindStreamlines,
+  groupWindPaths,
   WIND_DISPLAY_HEIGHT_METERS,
   WIND_PATH_LIMIT,
   WIND_NARROW_PATH_LIMIT,
 } from './streamlines.js';
+
+export const WIND_FADE_LOW_METERS = 15000;
+export const WIND_FADE_HIGH_METERS = 60000;
 
 // Original material: a persistent fine curve plus a moving, tapered highlight.
 // The integer part of s identifies a path; its fractional part follows the wind.
@@ -22,18 +26,29 @@ czm_material czm_getMaterial(czm_materialInput materialInput)
     float edge = 1.0 - smoothstep(0.26, 0.5, abs(materialInput.st.t - 0.5));
     float horizon = smoothstep(0.0, 0.065, v_windFacing);
     material.diffuse = mix(vec3(0.50, 0.79, 0.90), vec3(0.91, 0.99, 1.0), tip);
-    material.alpha = (ghostAlpha + 0.64 * tail + 0.16 * tip) * ends * edge * horizon;
+    material.alpha = (ghostAlpha + 0.64 * tail + 0.16 * tip) * ends * edge * horizon * heightFade;
     return material;
 }`;
 
 /** Native Cesium geometry/material owner. No animation loop or DOM ownership. */
 export function createWindGpuRendering({ cesium: C, getViewer }) {
-  let primitive = null;
+  const cells = [];
+  let occluder = null;
   let collection = null;
   let material = null;
   let paused = false;
   let destroyed = false;
-  let diagnostics = { pathCount: 0, vertexCount: 0, buildMs: 0, error: null };
+  const emptyDiagnostics = () => ({
+    pathCount: 0,
+    vertexCount: 0,
+    buildMs: 0,
+    error: null,
+    cellCount: 0,
+    visibleCells: 0,
+    visibleVertexCount: 0,
+    heightFade: 0,
+  });
+  let diagnostics = emptyDiagnostics();
 
   function supported() {
     const scene = getViewer?.()?.scene;
@@ -48,6 +63,10 @@ export function createWindGpuRendering({ cesium: C, getViewer }) {
         C?.PolylineGeometry &&
         C?.PolylineMaterialAppearance &&
         C?.Material &&
+        C?.BoundingSphere?.fromPoints &&
+        C?.Occluder &&
+        C?.Ellipsoid?.WGS84 &&
+        C?.Intersect &&
         C?.Cartesian3?.fromDegrees,
       ) &&
       (C.SceneMode?.SCENE3D === undefined ||
@@ -57,15 +76,16 @@ export function createWindGpuRendering({ cesium: C, getViewer }) {
   }
 
   function clear() {
-    if (primitive) {
-      collection?.remove(primitive);
-      if (!primitive.isDestroyed?.()) primitive.destroy?.();
+    for (const cell of cells) {
+      collection?.remove(cell.primitive);
+      if (!cell.primitive.isDestroyed?.()) cell.primitive.destroy?.();
     }
-    primitive = null;
+    cells.length = 0;
+    occluder = null;
     collection = null;
     material?.destroy?.();
     material = null;
-    diagnostics = { pathCount: 0, vertexCount: 0, buildMs: 0, error: null };
+    diagnostics = emptyDiagnostics();
   }
 
   function setField(field) {
@@ -79,34 +99,14 @@ export function createWindGpuRendering({ cesium: C, getViewer }) {
       const paths = bakeWindStreamlines(field, { count: budget });
       if (!paths.length) return false;
       let vertexCount = 0;
-      const instances = paths.map((path) => {
-        const positions = path.coordinates.map(([lon, lat]) =>
-          C.Cartesian3.fromDegrees(lon, lat, WIND_DISPLAY_HEIGHT_METERS),
-        );
-        // Pass the native description to Cesium's worker. Per-instance seed
-        // attributes avoid touching the expanded vertex buffer on the UI thread.
-        const geometry = new C.PolylineGeometry({
-          positions,
-          width: 2.4,
-          arcType: C.ArcType?.NONE,
-          vertexFormat: C.PolylineMaterialAppearance.VERTEX_FORMAT,
-        });
-        vertexCount += positions.length * 4 - 4;
-        return new C.GeometryInstance({
-          geometry,
-          attributes: {
-            windSeed: new C.GeometryInstanceAttribute({
-              componentDatatype: C.ComponentDatatype.FLOAT,
-              componentsPerAttribute: 1,
-              value: [path.seed],
-            }),
-          },
-        });
-      });
       material = new C.Material({
         fabric: {
           type: 'GevWindStreamline',
-          uniforms: { phaseTime: 0, ghostAlpha: paused ? 0.34 : 0.25 },
+          uniforms: {
+            phaseTime: 0,
+            ghostAlpha: paused ? 0.34 : 0.25,
+            heightFade: 0,
+          },
           source: FLOW_MATERIAL,
         },
         translucent: () => true,
@@ -130,23 +130,72 @@ export function createWindGpuRendering({ cesium: C, getViewer }) {
           /void\s+main\s*\(\s*\)\s*\{/,
           `void main() {\nvec3 windWorld = (czm_model * vec4(position3DHigh + position3DLow, 1.0)).xyz;\nv_windFacing = dot(normalize(windWorld), normalize(czm_viewerPositionWC - windWorld));\n`,
         );
-      const appearance = new C.PolylineMaterialAppearance({
-        material,
-        vertexShaderSource,
-        translucent: true,
-        renderState: { depthTest: { enabled: true }, depthMask: false },
-      });
-      primitive = new C.Primitive({
-        geometryInstances: instances,
-        appearance,
-        asynchronous: true,
-        allowPicking: false,
-        releaseGeometryInstances: true,
-        compressVertices: false,
-      });
-      collection = getViewer().scene.primitives;
-      collection.add(primitive);
+      const scene = getViewer().scene;
+      collection = scene.primitives;
+      // EllipsoidalOccluder only tests points. Use Cesium's sphere occluder
+      // with an inscribed Earth sphere, independent of scene.globe.show.
+      occluder = new C.Occluder(
+        new C.BoundingSphere(
+          C.Cartesian3.ZERO,
+          C.Ellipsoid.WGS84.minimumRadius,
+        ),
+        scene.camera.positionWC,
+      );
+      for (const group of groupWindPaths(paths)) {
+        const cellPositions = [];
+        let cellVertexCount = 0;
+        const instances = group.paths.map((path) => {
+          const positions = path.coordinates.map(([lon, lat]) =>
+            C.Cartesian3.fromDegrees(lon, lat, WIND_DISPLAY_HEIGHT_METERS),
+          );
+          // Pass the native description to Cesium's worker. Per-instance seed
+          // attributes avoid touching the expanded vertex buffer on the UI thread.
+          const geometry = new C.PolylineGeometry({
+            positions,
+            width: 2.4,
+            arcType: C.ArcType?.NONE,
+            vertexFormat: C.PolylineMaterialAppearance.VERTEX_FORMAT,
+          });
+          cellPositions.push(...positions);
+          cellVertexCount += positions.length * 4 - 4;
+          return new C.GeometryInstance({
+            geometry,
+            attributes: {
+              windSeed: new C.GeometryInstanceAttribute({
+                componentDatatype: C.ComponentDatatype.FLOAT,
+                componentsPerAttribute: 1,
+                value: [path.seed],
+              }),
+            },
+          });
+        });
+        const appearance = new C.PolylineMaterialAppearance({
+          material,
+          vertexShaderSource,
+          translucent: true,
+          renderState: { depthTest: { enabled: true }, depthMask: false },
+        });
+        const primitive = new C.Primitive({
+          show: false,
+          geometryInstances: instances,
+          appearance,
+          asynchronous: true,
+          allowPicking: false,
+          releaseGeometryInstances: true,
+          compressVertices: false,
+        });
+        const cell = {
+          primitive,
+          sphere: C.BoundingSphere.fromPoints(cellPositions),
+          vertexCount: cellVertexCount,
+        };
+        cells.push(cell);
+        collection.add(primitive);
+        vertexCount += cellVertexCount;
+      }
       diagnostics = {
+        ...emptyDiagnostics(),
+        cellCount: cells.length,
         pathCount: paths.length,
         vertexCount,
         buildMs: (globalThis.performance?.now?.() ?? Date.now()) - started,
@@ -161,9 +210,49 @@ export function createWindGpuRendering({ cesium: C, getViewer }) {
     }
   }
 
+  // Cesium reuses its frustum culling volume and the occluder's scratch vectors.
+  // This loop creates no positions, spheres, appearances or per-cell temporaries.
+  function updateVisibility(camera) {
+    const height = camera.positionCartographic.height;
+    const heightFade = Math.max(
+      0,
+      Math.min(
+        1,
+        (height - WIND_FADE_LOW_METERS) /
+          (WIND_FADE_HIGH_METERS - WIND_FADE_LOW_METERS),
+      ),
+    );
+    diagnostics.heightFade = heightFade;
+    if (material) material.uniforms.heightFade = heightFade;
+    diagnostics.visibleCells = 0;
+    diagnostics.visibleVertexCount = 0;
+    let volume;
+    if (heightFade > 0 && cells.length) {
+      occluder.cameraPosition = camera.positionWC;
+      volume = camera.frustum.computeCullingVolume(
+        camera.positionWC,
+        camera.directionWC,
+        camera.upWC,
+      );
+    }
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i];
+      cell.primitive.show =
+        heightFade > 0 &&
+        occluder.isBoundingSphereVisible(cell.sphere) &&
+        volume.computeVisibility(cell.sphere) !== C.Intersect.OUTSIDE;
+      if (cell.primitive.show) {
+        diagnostics.visibleCells++;
+        diagnostics.visibleVertexCount += cell.vertexCount;
+      }
+    }
+    return diagnostics.visibleCells > 0 && heightFade > 0;
+  }
+
   return {
     supported,
     setField,
+    updateVisibility,
     tick(elapsedSeconds) {
       if (material && !paused && Number.isFinite(elapsedSeconds))
         material.uniforms.phaseTime = Math.max(0, elapsedSeconds) % 10000;
@@ -180,7 +269,7 @@ export function createWindGpuRendering({ cesium: C, getViewer }) {
     getParticleCount: () => diagnostics.pathCount,
     getDiagnostics: () => ({
       ...diagnostics,
-      ready: Boolean(primitive?.ready),
+      ready: cells.length > 0 && cells.every((cell) => cell.primitive.ready),
       mode: 'gpu-streamlines',
       displayHeightMeters: WIND_DISPLAY_HEIGHT_METERS,
     }),
