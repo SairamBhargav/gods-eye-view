@@ -41,8 +41,8 @@ export function layoutRightPanelRail({
 }) {
   if (!stack) return;
 
-  const panels = [...stack.children].filter((panel) =>
-    panel.matches('[data-panel-id]'),
+  const panels = [...stack.children].filter(
+    (panel) => panel.matches('[data-panel-id]') && !panel.hidden,
   );
   if (!hud.visible || hud.variant !== 'tactical') {
     for (const panel of panels.filter((item) =>

@@ -129,7 +129,8 @@ export class LayerPanel {
     this._toggleContainer = container;
     this._weatherSummary?.destroy();
     this._weatherSummary = createWeatherSummary({
-      container: container?.ownerDocument?.body,
+      container:
+        container?.ownerDocument?.getElementById?.('weather-panel-body'),
       onOpen: (id) => {
         const panel = container.closest?.('#data-panel');
         if (panel?.classList.contains('collapsed'))

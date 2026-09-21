@@ -1,4 +1,7 @@
-/** Compact, event-driven context for enabled weather, independent of panel collapse. */
+// Remounting layer controls must not reopen a panel the user already collapsed.
+const appearedDocuments = new WeakSet();
+
+/** Event-driven active weather rows inside the managed rail panel body. */
 export function createWeatherSummary({ container, onOpen = () => {} } = {}) {
   const document = container?.ownerDocument;
   if (!document?.createElement) return null;
@@ -6,10 +9,8 @@ export function createWeatherSummary({ container, onOpen = () => {} } = {}) {
   root.className = 'weather-summary';
   root.setAttribute('aria-label', 'Active weather');
   root.hidden = true;
-  const title = document.createElement('div');
-  title.className = 'weather-summary-title';
-  title.textContent = 'WEATHER';
-  root.appendChild(title);
+  const panel = container.closest?.('#weather-panel');
+  const count = panel?.querySelector('#weather-panel-count');
   const rows = new Map();
   const text = (element, value) => {
     const next = String(value || '');
@@ -106,11 +107,22 @@ export function createWeatherSummary({ container, onOpen = () => {} } = {}) {
         }
       const hidden = rows.size === 0;
       if (root.hidden !== hidden) root.hidden = hidden;
+      if (count) text(count, String(rows.size));
+      if (panel && panel.hidden !== hidden) panel.hidden = hidden;
+      if (!hidden && panel && !appearedDocuments.has(document)) {
+        appearedDocuments.add(document);
+        if (panel.classList.contains('collapsed'))
+          panel
+            .querySelector('[data-collapse-target="weather-panel"]')
+            ?.click();
+      }
     },
     destroy() {
       root.removeEventListener('click', click);
       root.remove();
       rows.clear();
+      if (panel && !panel.hidden) panel.hidden = true;
+      if (count) text(count, '0');
     },
   };
 }

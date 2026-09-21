@@ -211,6 +211,34 @@ test('right layout uses keyboard focus when there is no preferred panel', () => 
   assert.equal(f.second.classList.contains('collapsed'), false);
 });
 
+for (const collapsed of [true, false]) {
+  test(`right layout ignores a hidden ${collapsed ? 'collapsed' : 'expanded'} panel`, () => {
+    const baseline = fixture('right');
+    baseline.stack.children = [baseline.first];
+    baseline.expand(baseline.first, 600);
+    baseline.run();
+
+    const f = fixture('right');
+    f.expand(f.first, 600);
+    f.second.id = 'weather-panel';
+    f.second.hidden = true;
+    if (!collapsed) f.expand(f.second, 900);
+    f.options.preferredPanelId = 'weather-panel';
+    f.run();
+
+    assert.deepEqual(f.stack.dataset, baseline.stack.dataset);
+    assert.equal(
+      f.first.style.getPropertyValue('--right-panel-allocated-height'),
+      baseline.first.style.getPropertyValue('--right-panel-allocated-height'),
+    );
+    assert.equal(f.second.classList.contains('collapsed'), collapsed);
+    assert.deepEqual(f.second.writes, []);
+    assert.deepEqual(f.collapsed, []);
+    assert.equal(f.retries(), 0);
+    assert.equal(f.stack.classList.contains('layout-focus'), false);
+  });
+}
+
 test('right layout retains Display allocation during measurement and caps restored scroll', () => {
   const f = fixture('right');
   f.first.id = 'pp-toggles';

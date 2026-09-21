@@ -73,8 +73,9 @@ were reused, and the study found no application licence granting reuse. Native
 hardware GPU behavior remains unverified; software-rendered checks do not
 establish native GPU performance or compatibility.
 
-Weather keeps a compact active-product summary and legend visible outside the
-expanded controls. Status lines reserve their space and panel refreshes are
+Weather shows its active-product summary and legend in a right-rail WEATHER
+panel while a weather layer is on. It auto-expands once per page session, then
+remembers the user’s collapsed state. Status lines reserve their space and panel refreshes are
 coalesced per frame. Each product retains its own observed or forecast clock.
 Inspection emphasizes the chosen scalar and marks the exact sampled location;
 the passive marker follows that snapshot, respects globe occlusion and disappears
