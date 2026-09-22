@@ -2,15 +2,22 @@
 
 ## Unreleased — weather review
 
+- Keep Google 3D Tiles drawing while draped weather imagery loads and retain the
+  old observation until the replacement has rendered.
+- Decode one bounded global infrared mosaic per frame on both map hosts, then
+  crop local tiles to avoid request-dependent brightness seams.
+- Add Filtered / Full infrared controls and share-link state. Filtered mode uses
+  a soft linear-brightness alpha ramp from 0.40 to 0.70 around the old 0.55 cut.
+
 - On 3D Tiles, observed weather imagery hides below 60 km camera height to avoid
   re-mapping dense tiles and resumes above that height.
 - Dock the weather summary in the right rail with standard panel collapse and drag chrome.
 
 - Drape weather imagery and wind color fields onto photorealistic 3D Tiles.
-- Draw infrared pixels below a brightness threshold transparent so bright (cold)
-  areas stand out. This is a display filter, not a cloud mask.
+- Filter infrared brightness so cold cloud tops stand out; this is a display
+  filter, not a cloud mask.
 - Retry throttled weather tiles up to three times per tile.
-- Use bounded tiles for global infrared and wind scalar fields on 3D Tiles,
+- Use bounded raster tiles for global infrared and wind scalar fields on 3D Tiles,
   avoiding Cesium 1.138's level-zero coverage failure.
 
 - Cull regional wind batches per frame, fade curves below 60 km, and stop idle

@@ -90,3 +90,38 @@ test('real Cesium geographic raster provider crops level 0/1 wind tiles with pre
     );
   }
 });
+
+test('bounded decoded mosaic crops both roots and higher levels without resampling its extent', async () => {
+  const texture = { width: 2048, height: 1024 };
+  const rectangle = Cesium.Rectangle.fromDegrees(-180, -60, 180, 60);
+  const scheme = new Cesium.GeographicTilingScheme({
+    rectangle,
+    numberOfLevelZeroTilesX: 2,
+    numberOfLevelZeroTilesY: 1,
+  });
+  const credit = new Cesium.Credit('NOAA');
+  const provider = createRasterTileProvider({
+    cesium: Cesium,
+    texture,
+    rectangle,
+    tilingScheme: scheme,
+    maximumLevel: 3,
+    credit,
+    createCanvas,
+  });
+  assert.equal(provider.rectangle, rectangle);
+  assert.equal(provider.maximumLevel, 3);
+  assert.equal(provider.credit, credit);
+  assert.equal(provider.hasAlphaChannel, true);
+  for (const [x, y, level, crop] of [
+    [0, 0, 0, [0, 0, 1024, 1024, 0, 0, 256, 256]],
+    [1, 0, 0, [1024, 0, 1024, 1024, 0, 0, 256, 256]],
+    [7, 3, 2, [1792, 768, 256, 256, 0, 0, 256, 256]],
+  ]) {
+    const pending = provider.requestImage(x, y, level);
+    assert.ok(pending instanceof Promise);
+    const tile = await pending;
+    assert.equal(tile.source, texture);
+    assert.deepEqual(tile.crop, crop);
+  }
+});

@@ -9,6 +9,9 @@ export function orderWeatherImagery(collection, layer, priority) {
     const item = collection.get(i);
     if (priorities.has(item)) weather.push(item);
   }
-  weather.sort((a, b) => priorities.get(a) - priorities.get(b));
-  for (const item of weather) collection.raiseToTop(item);
+  const ordered = [...weather].sort(
+    (a, b) => priorities.get(a) - priorities.get(b),
+  );
+  if (weather.every((item, i) => item === ordered[i])) return;
+  for (const item of ordered) collection.raiseToTop(item);
 }

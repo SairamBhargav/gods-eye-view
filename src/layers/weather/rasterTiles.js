@@ -1,26 +1,31 @@
-/** Tile a global geographic field raster without network requests or scene state. */
+/** Tile a bounded geographic raster or decoded canvas without network requests or scene state. */
 export function createRasterTileProvider({
   cesium,
   raster,
   credit,
   createCanvas,
+  texture: decodedTexture,
+  rectangle = cesium.Rectangle.MAX_VALUE,
+  tilingScheme = new cesium.GeographicTilingScheme({ rectangle }),
+  maximumLevel = 2,
 }) {
-  const texture = createCanvas();
-  texture.width = raster.width;
-  texture.height = raster.height;
-  const context = texture.getContext('2d');
-  const pixels = context.createImageData(raster.width, raster.height);
-  pixels.data.set(raster.rgba);
-  context.putImageData(pixels, 0, 0);
-  const tilingScheme = new cesium.GeographicTilingScheme();
+  const texture = decodedTexture ?? createCanvas();
+  if (!decodedTexture) {
+    texture.width = raster.width;
+    texture.height = raster.height;
+    const context = texture.getContext('2d');
+    const pixels = context.createImageData(raster.width, raster.height);
+    pixels.data.set(raster.rgba);
+    context.putImageData(pixels, 0, 0);
+  }
   return {
     tilingScheme,
-    rectangle: cesium.Rectangle.MAX_VALUE,
+    rectangle,
     tileWidth: 256,
     tileHeight: 256,
     minimumLevel: 0,
     // Cesium 1.138 draping clamps coverage to maximumLevel - 1.
-    maximumLevel: 2,
+    maximumLevel,
     ready: true,
     tileDiscardPolicy: undefined,
     credit,
@@ -32,9 +37,10 @@ export function createRasterTileProvider({
       const tile = createCanvas();
       tile.width = tile.height = 256;
       const ctx = tile.getContext('2d');
-      const width = raster.width / tilingScheme.getNumberOfXTilesAtLevel(level);
+      const width =
+        texture.width / tilingScheme.getNumberOfXTilesAtLevel(level);
       const height =
-        raster.height / tilingScheme.getNumberOfYTilesAtLevel(level);
+        texture.height / tilingScheme.getNumberOfYTilesAtLevel(level);
       ctx.imageSmoothingEnabled = true;
       ctx.drawImage(
         texture,

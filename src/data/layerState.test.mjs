@@ -1650,3 +1650,15 @@ test('observed weather round trips product and opacity without persisting histor
   assert.equal(state.options['weather-satellite'].product, 'clouds');
   assert.equal(Object.hasOwn(state.options['weather-radar'], 'play'), false);
 });
+
+test('satellite infrared display mode round trips and invalid or absent values use filtered', () => {
+  for (const infrared of ['full', 'filtered', undefined, 'invalid']) {
+    const state = normalizeLayerState({ enabledLayerIds: ['weather-satellite'], options: {
+      'weather-satellite': { infrared, product: 'clouds', step: -1, play: true },
+    } });
+    assert.deepEqual(decodeLayerStateParams(new URLSearchParams(encode(state))), state);
+    assert.equal(state.options['weather-satellite'].infrared, infrared === 'full' ? 'full' : 'filtered');
+    assert.equal(Object.hasOwn(state.options['weather-satellite'], 'step'), false);
+    assert.equal(Object.hasOwn(state.options['weather-satellite'], 'play'), false);
+  }
+});

@@ -27,7 +27,7 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 const flush = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  for (let i = 0; i < 30; i++) await Promise.resolve();
 };
 function event() {
   const listeners = new Set();
@@ -66,6 +66,25 @@ function target(extra = {}) {
     },
   };
 }
+function mockCanvas() {
+  const canvas = { width: 0, height: 0 };
+  canvas.getContext = () => ({
+    drawImage(source, ...crop) {
+      canvas.source = source;
+      canvas.crop = crop;
+    },
+    getImageData: () => ({ data: new Uint8ClampedArray([194, 100, 0, 200]) }),
+    putImageData(pixels) {
+      canvas.pixels = pixels.data;
+    },
+  });
+  return canvas;
+}
+const mockResponse = () => ({
+  ok: true,
+  headers: new Headers(),
+  arrayBuffer: async () => new ArrayBuffer(1),
+});
 function renderingHarness(options = {}) {
   const layers = [];
   const providers = [];
@@ -79,7 +98,8 @@ function renderingHarness(options = {}) {
       this.response = null;
       providers.push(this);
     }
-    requestImage() {
+    requestImage(...args) {
+      this.requestArgs = args;
       return this.response?.promise;
     }
   }
@@ -89,6 +109,7 @@ function renderingHarness(options = {}) {
       return layer;
     },
     addImageryProvider(provider) {
+      if (!providers.includes(provider)) providers.push(provider);
       const layer = { imageryProvider: provider, alpha: 1, show: true };
       layers.push(layer);
       return layer;
@@ -133,15 +154,19 @@ function renderingHarness(options = {}) {
   const cesium = {
     Color,
     UrlTemplateImageryProvider: Provider,
-    GeographicTilingScheme: class {
-      constructor(options) {
-        this.options = options;
-      }
-    },
-    Credit: class {},
-    Rectangle: { fromDegrees: (...values) => values },
+    GeographicTilingScheme,
+    Event: Cesium.Event,
+    Credit: Cesium.Credit,
+    Rectangle: Cesium.Rectangle,
   };
-  const rendering = createWeatherRendering({ viewer, cesium, ...options });
+  const rendering = createWeatherRendering({
+    viewer,
+    cesium,
+    fetchImpl: async () => mockResponse(),
+    decodeImage: async () => ({ width: 2048, height: 1024, close() {} }),
+    createCanvas: mockCanvas,
+    ...options,
+  });
   const settle = () => {
     postRender.emit();
     postRender.emit();
@@ -316,6 +341,14 @@ test('weather stages invisibly, waits for pending tiles and render readiness, an
   );
   h.settle();
   assert.equal(await second, true);
+  assert.equal(h.layers.length, 2, 'old layer survives the admission render');
+  assert.equal(
+    h.layers[1].alpha,
+    0.7,
+    'new layer is visible before retirement',
+  );
+  assert.equal(layer.destroyed, undefined);
+  h.postRender.emit();
   assert.equal(h.layers.length, 1);
   assert.equal(layer.destroyed, true);
   assert.equal(h.providers[0].errorEvent.size, 0);
@@ -395,6 +428,7 @@ function layerHarness({
   const documentRef = target({ hidden: false });
   const moveEnd = event();
   let time = null;
+  let infraredMode = 'filtered';
   let active = null;
   let clearCount = 0;
   const rendering = {
@@ -402,18 +436,22 @@ function layerHarness({
       active?.finish(false);
     },
     setAlpha() {},
-    setFrame(value, selected, { signal } = {}) {
+    setFrame(value, selected, { signal, infrared = 'filtered' } = {}) {
       if (active) active.finish(false);
       const task = deferred();
       const abort = () => stage.finish(false);
       const stage = {
         ...task,
         time: selected,
+        infrared,
         signal,
         finish(ok = true) {
           signal?.removeEventListener('abort', abort);
           if (active === stage) {
-            if (ok) time = selected;
+            if (ok) {
+              time = selected;
+              infraredMode = infrared;
+            }
             active = null;
           }
           task.resolve(ok);
@@ -430,7 +468,12 @@ function layerHarness({
       active = null;
       time = null;
     },
-    getDiagnostics: () => ({ time, loading: Boolean(active), error: null }),
+    getDiagnostics: () => ({
+      time,
+      infrared: infraredMode,
+      loading: Boolean(active),
+      error: null,
+    }),
   };
   const viewer = { camera: { moveEnd } };
   const layer = createWeatherLayer({
@@ -641,22 +684,47 @@ test('superseding a pending stage preserves the newer manifest loading state', a
   h.layer.destroy();
 });
 
-test('global infrared is one bounded geographic mosaic with no per-tile contrast seams', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const h = renderingHarness();
+test('global infrared is acquired before staging and cropped from one processed mosaic', async () => {
+  let fetches = 0;
+  const decode = deferred();
+  const h = renderingHarness({
+    fetchImpl: async () => {
+      fetches++;
+      return mockResponse();
+    },
+    decodeImage: () => decode.promise,
+  });
   const task = h.rendering.setFrame(
     { ...snapshot, product: 'clouds' },
     times[0],
   );
-  const options = h.providers[0].options;
-  assert.match(options.url, /^\/api\/weather\/image\?product=clouds&time=/);
-  assert.equal(options.maximumLevel, 0);
-  assert.equal(options.tileWidth, 2048);
-  assert.equal(options.tileHeight, 1024);
-  assert.equal(options.tilingScheme.options.numberOfLevelZeroTilesX, 1);
-  assert.deepEqual(options.tilingScheme.options.rectangle, options.rectangle);
+  await flush();
+  assert.equal(h.layers.length, 0);
+  assert.equal(h.rendering.getDiagnostics().loading, true);
+  assert.deepEqual(h.rendering.getDiagnostics().mosaic, {
+    fetched: true,
+    decodeMs: null,
+  });
+  decode.resolve({ width: 2048, height: 1024 });
+  await flush();
+  const provider = h.layers[0].imageryProvider;
+  assert.equal(provider.maximumLevel, 3);
+  assert.equal(provider.tileWidth, 256);
+  assert.equal(provider.tileHeight, 256);
+  assert.equal(provider.tilingScheme.getNumberOfXTilesAtLevel(0), 2);
+  assert.deepEqual(provider.tilingScheme.rectangle, provider.rectangle);
+  const first = await provider.requestImage(0, 0, 0);
+  const next = await provider.requestImage(1, 0, 0);
+  assert.equal(first.source, next.source);
+  assert.deepEqual(
+    first.source.pixels,
+    new Uint8ClampedArray([194, 100, 0, 98]),
+  );
+  assert.equal(fetches, 1);
   h.settle();
   assert.equal(await task, true);
+  assert.equal(h.rendering.getDiagnostics().mosaic.fetched, true);
+  assert.equal(typeof h.rendering.getDiagnostics().mosaic.decodeMs, 'number');
   h.rendering.clear();
 });
 
@@ -833,16 +901,14 @@ test('a stage without a current frame is cancelled on host change and detached f
 });
 
 for (const product of ['clouds', 'clouds-regional', 'radar', 'lightning']) {
-  test(`${product} applies infrared transparency only where appropriate on either host`, async () => {
+  test(`${product} does not use a hard layer alpha cut on either host`, async () => {
     for (const kind of ['globe', 'tileset']) {
       const collection = new ImageryLayerCollection();
       const h = renderingHarness({ getHost: () => ({ collection, kind }) });
       const stage = h.rendering.setFrame({ ...snapshot, product }, times[0]);
+      await flush();
       const layer = collection.get(0);
-      if (product.startsWith('clouds')) {
-        assert.deepEqual(layer.colorToAlpha, new Color(0, 0, 0, 1));
-        assert.equal(layer.colorToAlphaThreshold, 0.55);
-      } else assert.equal(layer.colorToAlpha, undefined);
+      assert.equal(layer.colorToAlpha, undefined);
       assert.equal(layer.alpha, 0);
       h.rendering.clear();
       assert.equal(await stage, false);
@@ -978,62 +1044,62 @@ for (const kind of ['globe', 'tileset']) {
       },
       times[0],
     );
+    await flush();
     const layer = collection.get(0);
     const provider = layer.imageryProvider;
-    assert.ok(provider instanceof Cesium.UrlTemplateImageryProvider);
     assert.ok(provider.tilingScheme instanceof Cesium.GeographicTilingScheme);
-    assert.equal(provider.maximumLevel, kind === 'tileset' ? 3 : 0);
-    assert.equal(provider.tileWidth, kind === 'tileset' ? 256 : 2048);
-    assert.equal(provider.tileHeight, kind === 'tileset' ? 256 : 1024);
-    assert.equal(
-      provider.tilingScheme.getNumberOfXTilesAtLevel(0),
-      kind === 'tileset' ? 2 : 1,
+    assert.equal(provider.maximumLevel, 3);
+    assert.equal(provider.tileWidth, 256);
+    assert.equal(provider.tileHeight, 256);
+    assert.equal(provider.tilingScheme.getNumberOfXTilesAtLevel(0), 2);
+    assert.equal(provider.tilingScheme.getNumberOfYTilesAtLevel(0), 1);
+    assert.ok(
+      Cesium.Rectangle.equals(
+        provider.rectangle,
+        Cesium.Rectangle.fromDegrees(-180, -60, 180, 60),
+      ),
     );
-    assert.match(
-      provider.url,
-      kind === 'tileset'
-        ? /weather\/tile\?product=clouds/
-        : /weather\/image\?product=clouds/,
-    );
-    assert.equal(layer.colorToAlphaThreshold, 0.55);
-    assert.ok(Cesium.Color.equals(layer.colorToAlpha, Cesium.Color.BLACK));
+    assert.equal(layer.colorToAlpha, undefined);
+    assert.ok(provider.requestImage(0, 0, 0) instanceof Promise);
     h.rendering.clear();
     assert.equal(await stage, false);
   });
 }
 
-test('global infrared rehomes by staging a compatible provider at the retained time', async () => {
-  let now = 0;
+test('global infrared rehomes the decoded provider without reacquiring or changing mode', async () => {
   const globe = new ImageryLayerCollection();
-  let host = { collection: globe, kind: 'globe' };
-  const h = renderingHarness({ getHost: () => host, now: () => now });
+  let host = { collection: globe, kind: 'globe' },
+    fetches = 0;
+  const h = renderingHarness({
+    getHost: () => host,
+    fetchImpl: async () => {
+      fetches++;
+      return mockResponse();
+    },
+  });
   const stage = h.rendering.setFrame(
     { ...snapshot, product: 'clouds' },
     times[0],
+    { infrared: 'full' },
   );
+  await flush();
   h.settle();
   assert.equal(await stage, true);
+  const layer = globe.get(0);
   const tiles = new ImageryLayerCollection();
   host = { collection: tiles, kind: 'tileset' };
   h.rendering.rehome();
-  const provider = h.providers.at(-1);
-  assert.equal(provider.options.maximumLevel, 3);
-  assert.equal(h.rendering.getDiagnostics().time, times[0]);
-  assert.equal(tiles.length, 2);
-  provider.response = { promise: Promise.resolve({}) };
-  await provider.requestImage(0, 0, 0);
-  now = 250;
-  h.settle();
   assert.equal(tiles.length, 1);
+  assert.equal(tiles.get(0), layer);
   assert.equal(h.rendering.getDiagnostics().loading, false);
+  assert.equal(h.rendering.getDiagnostics().infrared, 'full');
   host = { collection: null, kind: 'none' };
   h.rendering.rehome();
   host = { collection: globe, kind: 'globe' };
   h.rendering.rehome();
-  assert.equal(h.providers.at(-1).options.maximumLevel, 0);
-  h.settle();
+  assert.equal(globe.get(0), layer);
+  assert.equal(fetches, 1);
   assert.equal(h.rendering.getDiagnostics().time, times[0]);
-  assert.equal(globe.length, 1);
   h.rendering.clear();
 });
 
@@ -1113,6 +1179,7 @@ for (const [id, product] of [
     assert.equal(current.show, true);
     layer.setParams({ play: true });
     t.mock.timers.tick(2000);
+    await flush();
     assert.equal(h.layers.length, 2, 'history has an in-flight stage');
 
     camera.positionCartographic.height = 59_999;
@@ -1156,6 +1223,7 @@ for (const [id, product] of [
     assert.equal(layer.getDiagnostics().timerActive, true);
     assert.equal(layer.getRowControls().summary.status, null);
     t.mock.timers.tick(2000);
+    await flush();
     assert.equal(h.providers.length, 3, 'retained playback intent resumes');
 
     camera.positionCartographic.height = 1200;
@@ -1175,6 +1243,7 @@ for (const [id, product] of [
     assert.equal(current.show, true, 'globe ignores the low camera height');
     assert.equal(layer.getDiagnostics().playing, true);
     t.mock.timers.tick(2000);
+    await flush();
     assert.ok(h.providers.length > 3, 'globe keeps staging at low height');
     layer.destroy();
     assert.equal(camera.moveEnd.size, 0);
@@ -1206,4 +1275,228 @@ test('starting below the tileset floor stages latest only after crossing above i
   assert.equal(layer.getDiagnostics().loading, true);
   layer.destroy();
   await flush();
+});
+
+for (const outcome of [
+  'fetch failure',
+  'decode failure',
+  'timeout',
+  'abort',
+  'supersede',
+  'rehome',
+]) {
+  test(`mosaic ${outcome} retains the displayed frame and never installs a late decode`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const decode = deferred();
+    let signal,
+      closed = 0,
+      host;
+    const h = renderingHarness({
+      getHost: () => host,
+      fetchImpl: async (_url, options) => {
+        signal = options.signal;
+        if (outcome === 'fetch failure') throw new Error('offline');
+        return mockResponse();
+      },
+      decodeImage: () => decode.promise,
+    });
+    host = { collection: h.viewer.imageryLayers, kind: 'globe' };
+    const first = h.rendering.setFrame(snapshot, times[0]);
+    h.settle();
+    await first;
+    const original = h.layers[0];
+    const controller = new AbortController();
+    const pending = h.rendering.setFrame(
+      { ...snapshot, product: 'clouds' },
+      times[1],
+      { signal: controller.signal },
+    );
+    await flush();
+    assert.deepEqual(h.layers, [original]);
+    if (outcome === 'decode failure') decode.reject(new Error('bad png'));
+    if (outcome === 'timeout') t.mock.timers.tick(25_000);
+    if (outcome === 'abort') controller.abort();
+    if (outcome === 'supersede')
+      assert.equal(await h.rendering.setFrame(snapshot, times[0]), true);
+    if (outcome === 'rehome') {
+      host = {
+        collection: renderingHarness().viewer.imageryLayers,
+        kind: 'globe',
+      };
+      h.rendering.rehome();
+    }
+    assert.equal(await pending, false);
+    assert.equal(signal.aborted, true);
+    assert.equal(h.rendering.getDiagnostics().time, times[0]);
+    assert.equal(original.alpha, 0.7);
+    if (outcome !== 'decode failure') {
+      decode.resolve({
+        width: 2048,
+        height: 1024,
+        close() {
+          closed++;
+        },
+      });
+      await flush();
+      if (outcome !== 'fetch failure') assert.equal(closed, 1);
+    }
+    assert.equal(host.collection.length, 1);
+    h.rendering.clear();
+    assert.equal(h.postRender.size, 0);
+  });
+}
+
+test('regional transfer preserves deferrals, original Request, rejection and cancellation', async () => {
+  const h = renderingHarness();
+  const stage = h.rendering.setFrame(
+    { ...snapshot, product: 'clouds-regional' },
+    times[0],
+  );
+  const provider = h.providers[0];
+  let cancelled = 0;
+  const request = {
+    cancel() {
+      cancelled++;
+    },
+  };
+  assert.equal(provider.requestImage(1, 2, 3, request), undefined);
+  assert.deepEqual(provider.requestArgs, [1, 2, 3, request]);
+  const image = { width: 256, height: 256 };
+  provider.response = { promise: Promise.resolve(image) };
+  const processed = await provider.requestImage(1, 2, 3, request);
+  assert.equal(processed.source, image);
+  assert.deepEqual([...processed.pixels], [194, 100, 0, 98]);
+  const error = new Error('cancelled upstream');
+  provider.response = { promise: Promise.reject(error) };
+  await assert.rejects(
+    provider.requestImage(0, 0, 0, request),
+    (cause) => cause === error,
+  );
+  provider.response = deferred();
+  const late = provider.requestImage(0, 0, 0, request);
+  h.rendering.clear();
+  assert.equal(cancelled, 1);
+  provider.response.resolve(image);
+  assert.equal(await late, image, 'closed frames do not process late images');
+  assert.equal(await stage, false);
+});
+
+for (const kind of ['globe', 'tileset']) {
+  test(`infrared mode restages the same time on ${kind}, retaining the old layer for one rendered frame`, async () => {
+    let host,
+      now = 0;
+    const h = renderingHarness({ getHost: () => host, now: () => now });
+    host = { collection: h.viewer.imageryLayers, kind };
+    const clouds = { ...snapshot, product: 'clouds' };
+    const first = h.rendering.setFrame(clouds, times[0]);
+    await flush();
+    await h.providers[0].requestImage(0, 0, 0);
+    now = 250;
+    h.settle();
+    await first;
+    const previous = h.layers[0];
+    assert.equal(await h.rendering.setFrame(clouds, times[0]), true);
+    assert.equal(h.providers.length, 1);
+    const full = h.rendering.setFrame(clouds, times[0], { infrared: 'full' });
+    await flush();
+    const tile = await h.providers[1].requestImage(0, 0, 0);
+    assert.deepEqual([...tile.source.pixels], [194, 100, 0, 200]);
+    now = 500;
+    h.settle();
+    assert.equal(await full, true);
+    assert.equal(h.layers.length, 2);
+    assert.equal(h.layers[1].alpha, 0.7);
+    assert.equal(previous.destroyed, undefined);
+    assert.equal(h.rendering.getDiagnostics().infrared, 'full');
+    h.postRender.emit();
+    assert.equal(h.layers.length, 1);
+    assert.equal(previous.destroyed, true);
+    h.rendering.clear();
+    assert.equal(h.postRender.size, 0);
+  });
+}
+
+test('satellite mode chips restage history without changing time or latest-follow intent', async () => {
+  const h = layerHarness({ id: 'weather-satellite' });
+  const update = h.layer.update();
+  await flush();
+  h.stages[0].finish();
+  await update;
+  h.layer.setParams({ step: -1 });
+  h.stages[1].finish();
+  await flush();
+  h.layer.setParams({ infrared: 'full' });
+  assert.equal(h.stages[2].time, times[1]);
+  assert.equal(h.stages[2].infrared, 'full');
+  assert.equal(h.layer.getParams().infrared, 'full');
+  assert.deepEqual(
+    h.layer
+      .getRowControls()
+      .chips.slice(0, 4)
+      .map((chip) => chip.label),
+    ['N. America', 'Global', 'Filtered', 'Full infrared'],
+  );
+  h.stages[2].finish();
+  await flush();
+  assert.equal(h.layer.getDiagnostics().followLatest, false);
+  assert.equal(h.layer.getDiagnostics().time, times[1]);
+  h.layer.setParams({ infrared: 'invalid' });
+  assert.equal(h.layer.getParams().infrared, 'full');
+  assert.equal(h.stages.length, 3);
+  h.layer.destroy();
+});
+
+test('a rapid third selection waits for retirement before installing, and clear cancels that wait', async () => {
+  for (const clear of [false, true]) {
+    const h = renderingHarness();
+    const first = h.rendering.setFrame(snapshot, times[0]);
+    h.settle();
+    await first;
+    const second = h.rendering.setFrame(snapshot, times[1]);
+    h.settle();
+    await second;
+    assert.equal(h.layers.length, 2);
+    const third = h.rendering.setFrame(snapshot, times[2]);
+    assert.equal(h.layers.length, 2);
+    assert.equal(
+      h.providers.length,
+      2,
+      'third provider waits for outgoing retirement',
+    );
+    if (clear) {
+      h.rendering.clear();
+      assert.equal(await third, false);
+      h.postRender.emit();
+      assert.equal(h.layers.length, 0);
+      assert.equal(h.postRender.size, 0);
+    } else {
+      h.postRender.emit();
+      assert.equal(h.layers.length, 2);
+      assert.equal(h.providers.length, 3);
+      h.settle();
+      assert.equal(await third, true);
+      h.postRender.emit();
+      assert.equal(h.layers.length, 1);
+      h.rendering.clear();
+    }
+  }
+});
+
+test('a delayed installation failure retains the replacement and does not throw from postRender', async () => {
+  const h = renderingHarness();
+  for (const time of times.slice(0, 2)) {
+    const stage = h.rendering.setFrame(snapshot, time);
+    h.settle();
+    assert.equal(await stage, true);
+  }
+  const third = h.rendering.setFrame(snapshot, times[2]);
+  h.viewer.imageryLayers.addImageryProvider = () => {
+    throw new Error('upload unavailable');
+  };
+  assert.doesNotThrow(() => h.postRender.emit());
+  assert.equal(await third, false);
+  assert.equal(h.layers.length, 1);
+  assert.equal(h.layers[0].alpha, 0.7);
+  assert.equal(h.rendering.getDiagnostics().time, times[1]);
+  h.rendering.clear();
 });

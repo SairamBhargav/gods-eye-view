@@ -246,9 +246,9 @@ services: `https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows` a
   Coverage gaps do not mean no precipitation. The numeric legend follows NOAA's
   `weather_radar_base_reflectivity` style.
 - `goes_longwave_imagery`: GOES-19/18 Band 14, approximately 2 km, 5-minute updates,
-  regional North America. Infrared pixels below a brightness threshold are drawn
-  transparent so bright (cold) areas stand out. This is a display filter, not a
-  cloud mask or measured cloud volume.
+  regional North America. Filtered infrared softly dims pixels with a linear
+  brightness ramp from 0.40 to 0.70; Full infrared retains source alpha. This
+  is a display filter, not a cloud mask or measured cloud volume.
 - `global_longwave_imagery_mosaic`: approximately 3 km, hourly, nominal 60°S–60°N
   coverage and typically 2–3-hour latency. It is slower global context.
 
@@ -256,12 +256,14 @@ The UI displays the exact advertised observation time separately from acquisitio
 latest means the newest available observation, not zero-delay real time. Up to 13
 recent advertised frames can be replayed as history. No nowcast is synthesized.
 Tiles use WMS 1.1.1 EPSG:4326 longitude/latitude bounds; Cesium's geographic 2×1
-root grid is capped at level 6 for radar and regional GOES. On the globe, global
-infrared uses one fixed 2048×1024 geographic image: the source's request-dependent contrast
-otherwise creates brightness seams between tiles. This broad context view has a
-coarser display resolution than its 3 km source. On 3D Tiles, global infrared uses
-256 px geographic tiles capped at level 3 for draping coverage, accepting possible
-per-tile contrast seams. No browser reprojection is used. Browser imagery owns at most two frames; the proxy has an 8-request
+root grid is capped at level 6 for radar and regional GOES. Global infrared uses
+one fixed 2048×1024 geographic image on both hosts: the source's request-dependent
+contrast otherwise creates brightness seams between tiles. The browser decodes
+and filters it once, then crops 256 px tiles bounded to the manifest extent at
+maximum level 3. This broad context view has a coarser display resolution than
+its 3 km source. No browser reprojection is used. Browser imagery owns a displayed
+frame and a staging frame, retaining the outgoing layer for one render after
+admission; the proxy has an 8-request
 concurrency budget, 12-second deadline, 1 MiB tile / 4 MiB global PNG caps and a shared 16 MiB/128-image cache.
 Metadata refreshes every two minutes with explicitly stale last-good fallback.
 No key, new dependency, image reprojection job, or full-disk image download is needed.

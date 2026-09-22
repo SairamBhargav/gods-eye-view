@@ -54,17 +54,23 @@ history while metadata refresh continues, then resumes when a host returns.
 On 3D Tiles, observed weather imagery hides below 60 km camera height to avoid
 re-mapping dense tiles; it retains the shown frame and playback intent, then
 resumes at or above 60 km. Globe hosts are unaffected.
-Infrared pixels below a brightness threshold are drawn transparent so bright
-(cold) areas stand out; this is a display filter, not a cloud mask.
-Cesium 1.138's `ImageryPipelineStage.js` honours `ImageryLayer.colorToAlpha`
-in draping: it compares the maximum channel difference from black with the
-threshold after sRGB-to-linear conversion. `ModelImagery.js` tracks changes to
-that color. Both hosts use the layer filter; no canvas filter is needed.
-`ModelPrimitiveImagery.js` uses `ImageryCoverage._clampImageryLevel`, which clamps
-to `maximumLevel - 1`. Global infrared therefore uses 256 px geographic tiles
-with maximum level 3 on 3D Tiles. This accepts possible per-tile contrast seams;
-the globe keeps the fixed 2048×1024 mosaic to avoid those seams. Host changes
-replace incompatible providers while retaining the observation time.
+Filtered infrared applies a soft brightness ramp to decoded pixels once, using
+Cesium's sRGB-to-linear conversion (`channel ** 2.2`) and smoothstep from 0.40
+to 0.70. The old 0.55 threshold is the ramp midpoint. RGB and source alpha are
+preserved in Full infrared mode; both modes use the chosen layer opacity. This
+is a display filter, not a cloud mask. Satellite share links retain the display
+mode; observation history remains transient and links open latest.
+Global infrared fetches one capped 4 MiB, 2048×1024 mosaic per frame and decodes
+and processes it before staging. Both hosts crop that canvas into 256 px tiles
+on a geographic 2×1 root grid bounded to the manifest extent, avoiding
+request-dependent contrast seams. Maximum level 3 accommodates Cesium 1.138's
+`maximumLevel - 1` draping coverage clamp. Rehoming reuses the decoded provider.
+Regional infrared retains network tiles and processes each decoded tile once.
+Both Google tileset routes load draped imagery asynchronously so tiles keep
+drawing their own texture while weather loads. A replacement becomes visible
+before the previous layer retires on the next rendered frame; failed acquisition
+or staging retains the previous observation. Imagery ordering skips already
+ordered layers. Diagnostics expose the infrared mode and mosaic fetch/decode state.
 Throttled weather requests (429/503) get at most three retries per tile within
 a frame, independent of other tiles; successful requests reset only their own
 counter, and closing a frame clears its retry state.

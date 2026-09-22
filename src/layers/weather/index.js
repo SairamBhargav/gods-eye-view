@@ -43,6 +43,7 @@ export function createWeatherLayer({
   const satellite = !radar && !lightning;
   let product = radar ? 'radar' : lightning ? 'lightning' : 'clouds-regional';
   let opacity = 'strong';
+  let infrared = 'filtered';
   let viewer = null,
     rendering = null,
     manifest = null,
@@ -100,7 +101,11 @@ export function createWeatherLayer({
         followLatest || !manifest.times.includes(shownTime())
           ? manifest.latest
           : shownTime();
-      if (time !== shownTime()) void show(time);
+      if (
+        time !== shownTime() ||
+        (satellite && rendering.getDiagnostics().infrared !== infrared)
+      )
+        void show(time);
       else schedule();
     }
     notify();
@@ -127,7 +132,7 @@ export function createWeatherLayer({
     loading = true;
     notify();
     try {
-      const ok = await rendering.setFrame(manifest, time, { signal });
+      const ok = await rendering.setFrame(manifest, time, { signal, infrared });
       if (owner !== generation || !enabled || signal?.aborted) return false;
       error = ok ? null : 'Frame unavailable; previous observation retained';
       if (!ok) stop();
@@ -240,7 +245,11 @@ export function createWeatherLayer({
           followLatest || !snapshot.times.includes(shownTime())
             ? snapshot.latest
             : shownTime();
-        if (shownTime() !== time) await show(time, controller.signal);
+        if (
+          shownTime() !== time ||
+          (satellite && rendering.getDiagnostics().infrared !== infrared)
+        )
+          await show(time, controller.signal);
         return !controller.signal.aborted && request === controller && enabled;
       } catch (cause) {
         if (controller.signal.aborted || request !== controller) return false;
@@ -258,6 +267,11 @@ export function createWeatherLayer({
       }
     },
     setParams(params = {}) {
+      const infraredChanged =
+        satellite &&
+        ['filtered', 'full'].includes(params.infrared) &&
+        params.infrared !== infrared;
+      if (infraredChanged) infrared = params.infrared;
       if (['light', 'strong'].includes(params.opacity)) {
         opacity = params.opacity;
         rendering?.setAlpha(opacity === 'light' ? 0.4 : satellite ? 0.7 : 0.8);
@@ -278,6 +292,11 @@ export function createWeatherLayer({
         followLatest = true;
         rendering?.clear();
         if (enabled) void layer.update(viewer);
+      }
+      if (infraredChanged && enabled && manifest) {
+        clearTimeout(timer);
+        timer = null;
+        void show(shownTime() || manifest.latest);
       }
       if (
         params.focus === true &&
@@ -329,7 +348,11 @@ export function createWeatherLayer({
       notify();
     },
     getParams() {
-      return radar ? { opacity } : { product, opacity };
+      return radar
+        ? { opacity }
+        : satellite
+          ? { product, opacity, infrared }
+          : { product, opacity };
     },
     getRowControls() {
       const time = shownTime();
@@ -413,6 +436,25 @@ export function createWeatherLayer({
                     : 'GOES regional infrared; approximately 5-minute updates',
               }))
             : []),
+          ...(satellite
+            ? [
+                {
+                  id: 'filtered',
+                  label: 'Filtered',
+                  active: infrared === 'filtered',
+                  params: { infrared: 'filtered' },
+                  title:
+                    'Dim infrared below a brightness threshold so cold cloud tops stand out; a display filter, not a cloud mask',
+                },
+                {
+                  id: 'full',
+                  label: 'Full infrared',
+                  active: infrared === 'full',
+                  params: { infrared: 'full' },
+                  title: 'The complete infrared image at the chosen opacity',
+                },
+              ]
+            : []),
           {
             id: 'previous',
             label: '‹ Earlier',
@@ -485,7 +527,7 @@ export function createWeatherLayer({
           ? 'NOAA/NWS 15-minute lightning density derived from Vaisala NLDN/GLD360. Coverage 110°E across the Pacific/Americas to 0°, 25°S–80°N. Not a live strike count, global coverage or a safety warning.'
           : radar
             ? 'NOAA MRMS radar echoes indicate precipitation patterns, not rain rate, a storm warning or a future forecast. Native source approximately 1 km; display is limited to level 6. Frames use exact advertised observation times.'
-            : 'Infrared pixels below a brightness threshold are drawn transparent so bright (cold) areas stand out. This is a display filter, not a cloud mask or measured cloud volume. Global mosaic coverage and freshness differ from regional GOES.',
+            : 'Filtered infrared softly dims pixels below a brightness threshold so cold cloud tops stand out. Full infrared shows the complete image at the chosen opacity. This is a brightness display filter, not a cloud mask or measured cloud volume. Global mosaic coverage and freshness differ from regional GOES.',
       };
     },
     setRowControlsListener(value) {

@@ -226,6 +226,10 @@ const OPTION_GROUPS = Object.freeze({
     }),
   ]),
   'weather-satellite': Object.freeze([
+    enumOption('infrared', 'i', 'filtered', ['filtered', 'full'], {
+      filtered: 'f',
+      full: 'a',
+    }),
     enumOption('opacity', 'o', 'strong', ['light', 'strong'], {
       light: 'l',
       strong: 's',

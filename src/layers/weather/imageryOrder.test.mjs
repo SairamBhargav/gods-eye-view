@@ -48,3 +48,25 @@ test('tileset imagery collection preserves scalar, infrared, radar and lightning
   );
   tileset.imageryLayers.destroy();
 });
+
+test('already ordered imagery adds and repeated ordering cause no collection churn', () => {
+  const items = [];
+  let raises = 0;
+  const collection = {
+    get length() {
+      return items.length;
+    },
+    get: (i) => items[i],
+    raiseToTop(layer) {
+      raises++;
+      items.push(...items.splice(items.indexOf(layer), 1));
+    },
+  };
+  for (const priority of [0, 1, 1, 2, 3]) {
+    const layer = {};
+    items.push(layer);
+    orderWeatherImagery(collection, layer, priority);
+    orderWeatherImagery(collection, layer, priority);
+  }
+  assert.equal(raises, 0);
+});
