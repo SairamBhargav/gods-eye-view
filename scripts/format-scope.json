@@ -739,6 +739,8 @@
   "src/ui/cctvVideo.test.mjs",
   "src/ui/styles/weather.css",
   "src/layers/weather/index.js",
+  "src/layers/weather/clock.js",
+  "src/layers/weather/clock.test.mjs",
   "src/layers/weather/rendering.js",
   "src/layers/weather/infraredAlpha.js",
   "src/layers/weather/infraredAlpha.test.mjs",

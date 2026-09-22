@@ -4100,14 +4100,30 @@ Wind supports selectable GFS/IFS models with persisted model choice. Each fetch 
 
 ### Local Weather review candidate
 
-Weather now combines the existing GFS/ECMWF surface forecast with two independently
-owned observation layers: NOAA Rain radar (CONUS) and Satellite clouds (regional
-GOES or slower global infrared). Existing layer-row controls provide source,
-opacity, coverage navigation, exact frame time, earlier/later history, playback and
-Latest. Playback never mutates the viewer clock; it pauses when hidden or reduced
-motion is requested. At most current+staging imagery exist per layer, retaining the
-previous frame if the incoming frame fails. Both layers are off by default and
-share/persist product and opacity; transient history does not persist.
+Weather combines the GFS/ECMWF surface forecast with three observation layers:
+NOAA Rain radar (CONUS), Satellite clouds (regional GOES or slower global infrared),
+and 15-minute lightning density (Americas and Pacific). One transient observed
+clock drives all enabled observation rows. Earlier/Later use the sorted union of
+non-suspended products' advertised times; each product selects its nearest frame
+at or before the requested UTC time, never a future frame or an interpolation.
+The maximum gap is 30 minutes for radar, regional infrared and lightning, and
+3 hours for hourly global infrared. A missing eligible frame hides that product
+and reports the gap; rows show actual displayed UTC time with synced/nearest labels.
+Manifest rollover preserves the requested history time, even when frames expire.
+
+Latest follows each product's own newest frame, so its timestamps can differ.
+Playback advances two seconds after all products settle, wraps, and stops with
+fewer than two union times or when all products are suspended. Hidden documents,
+reduced motion and unavailable imagery hosts suspend products. Re-enabling or
+restoring a host joins the retained history target. The wind row explicitly says
+“Forecast · does not follow history” while the observed clock is in history mode.
+The catalog exposes `weatherClock` and destroys it with its lifetime signal.
+
+Existing row controls retain source, opacity, coverage navigation and transport;
+no controls move in this pass. The viewer clock is untouched. Observation layers
+are off by default; share/persist includes appearance and product, while history
+is transient and shared links open latest. Rendering retains the previous frame
+when an incoming frame fails; no eligible historical frame instead hides imagery.
 
 Desktop wind now allows 7,200 baked native GPU paths (narrow viewports remain at
 1,200). This doubles the maximum desktop geometry budget, not forecast resolution.

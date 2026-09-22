@@ -26,6 +26,7 @@ export function createWeatherRendering({
   let incoming = null;
   const retiring = new Set();
   let alpha = 0.7;
+  let frameHidden = false;
   let lastError = null;
 
   function remove(frame) {
@@ -63,12 +64,13 @@ export function createWeatherRendering({
   function rehome() {
     const host = getHost();
     const { collection, kind } = host;
-    const hidden = imageryHostStatus(host, viewer.camera) !== null;
+    const hidden =
+      frameHidden || imageryHostStatus(host, viewer.camera) !== null;
     const changed =
       (current && current.collection !== collection) ||
       (incoming && incoming.collection !== collection);
     const visibilityChanged = current && current.layer.show === hidden;
-    if (changed || hidden) {
+    if (changed || imageryHostStatus(host, viewer.camera) !== null) {
       cancelIncoming();
       for (const frame of retiring) remove(frame);
     }
@@ -153,6 +155,7 @@ export function createWeatherRendering({
           current = frame;
           frame.loadMs = now() - frame.startedAt;
           frame.layer.alpha = alpha;
+          frame.layer.show = !frameHidden;
           viewer.scene.requestRender();
           if (previous) {
             retiring.add(previous);
@@ -341,6 +344,15 @@ export function createWeatherRendering({
       onChange();
       return result;
     },
+    setHidden(value) {
+      frameHidden = Boolean(value);
+      if (frameHidden) {
+        cancelIncoming();
+        for (const frame of retiring) remove(frame);
+      }
+      rehome();
+      viewer.scene.requestRender();
+    },
     setAlpha(value) {
       alpha = value;
       if (current && current.layer.show) current.layer.alpha = alpha;
@@ -351,6 +363,7 @@ export function createWeatherRendering({
       remove(current);
       for (const frame of retiring) remove(frame);
       current = null;
+      frameHidden = false;
       lastError = null;
       viewer.scene.requestRender();
     },
@@ -361,7 +374,8 @@ export function createWeatherRendering({
         mosaic: (incoming || current)?.mosaic,
         infrared: (incoming || current)?.infrared ?? 'filtered',
         loading: !!incoming,
-        time: current?.time ?? null,
+        time: frameHidden ? null : (current?.time ?? null),
+        hidden: frameHidden,
         product: current?.product ?? null,
         pendingTiles: incoming?.pending ?? 0,
         deferredTiles: incoming?.deferred.size ?? 0,

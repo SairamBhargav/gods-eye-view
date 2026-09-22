@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWeatherRendering } from './rendering.js';
 import { createWeatherLayer } from './index.js';
+import { createWeatherClock } from './clock.js';
 import * as Cesium from 'cesium';
 import { Color, ImageryLayerCollection, GeographicTilingScheme } from 'cesium';
 import { NO_IMAGERY_HOST } from './imageryHost.js';
@@ -418,6 +419,7 @@ test('failed and timed-out stages retain the previous observation; a healthy rep
 });
 
 function layerHarness({
+  clock,
   reducedMotion = false,
   feed,
   id,
@@ -431,11 +433,16 @@ function layerHarness({
   let infraredMode = 'filtered';
   let active = null;
   let clearCount = 0;
+  let hidden = false;
   const rendering = {
     rehome() {
       active?.finish(false);
     },
     setAlpha() {},
+    setHidden(value) {
+      hidden = value;
+      if (value) active?.finish(false);
+    },
     setFrame(value, selected, { signal, infrared = 'filtered' } = {}) {
       if (active) active.finish(false);
       const task = deferred();
@@ -469,7 +476,8 @@ function layerHarness({
       time = null;
     },
     getDiagnostics: () => ({
-      time,
+      time: hidden ? null : time,
+      hidden,
       infrared: infraredMode,
       loading: Boolean(active),
       error: null,
@@ -477,6 +485,7 @@ function layerHarness({
   };
   const viewer = { camera: { moveEnd } };
   const layer = createWeatherLayer({
+    clock,
     id,
     feed: feed ?? { getSnapshot: async () => snapshot },
     documentRef,
@@ -1499,4 +1508,227 @@ test('a delayed installation failure retains the replacement and does not throw 
   assert.equal(h.layers[0].alpha, 0.7);
   assert.equal(h.rendering.getDiagnostics().time, times[1]);
   h.rendering.clear();
+});
+
+test('one row steps every registered observation; missing frames hide and latest restores each product', async (t) => {
+  const clock = createWeatherClock();
+  const radar = layerHarness({ clock });
+  const satellite = layerHarness({
+    clock,
+    id: 'weather-satellite',
+    feed: {
+      getSnapshot: async () => ({
+        ...snapshot,
+        product: 'clouds-regional',
+        times: [times[1]],
+        latest: times[1],
+      }),
+    },
+  });
+  t.after(() => {
+    radar.layer.destroy();
+    satellite.layer.destroy();
+    clock.destroy();
+  });
+  const updates = [radar.layer.update(), satellite.layer.update()];
+  await flush();
+  radar.stages.at(-1).finish();
+  satellite.stages.at(-1).finish();
+  await Promise.all(updates);
+  let satelliteChanges = 0;
+  satellite.layer.setRowControlsListener(() => satelliteChanges++);
+  const transport = (h) =>
+    h.layer
+      .getRowControls()
+      .chips.filter(({ id }) =>
+        ['previous', 'play', 'next', 'latest'].includes(id),
+      );
+  radar.layer.setParams({ step: -1 });
+  await flush();
+  assert.equal(clock.getState().target, times[1]);
+  assert.equal(radar.stages.at(-1).time, times[1]);
+  assert.equal(satellite.stages.at(-1).time, times[1]);
+  radar.stages.at(-1).finish();
+  satellite.stages.at(-1).finish();
+  await flush();
+  assert.match(satellite.layer.getRowControls().summary.detail, /synced/);
+  assert.ok(satelliteChanges > 0);
+  assert.deepEqual(
+    transport(radar).map(({ id, active, disabled, label }) => ({
+      id,
+      active,
+      disabled,
+      label,
+    })),
+    transport(satellite).map(({ id, active, disabled, label }) => ({
+      id,
+      active,
+      disabled,
+      label,
+    })),
+  );
+  satellite.layer.setParams({ step: -1 });
+  await flush();
+  radar.stages.at(-1).finish();
+  await flush();
+  assert.equal(clock.getState().target, times[0]);
+  assert.equal(satellite.layer.getDiagnostics().hidden, true);
+  assert.match(
+    satellite.layer.getRowControls().summary.status,
+    /No frame within 30 min of 09-15 20:00 UTC/,
+  );
+  radar.layer.setParams({ step: 1 });
+  await flush();
+  radar.stages.at(-1).finish();
+  satellite.stages.at(-1).finish();
+  await flush();
+  assert.equal(satellite.layer.getDiagnostics().hidden, false);
+  radar.layer.setParams({ latest: true });
+  await flush();
+  radar.stages.at(-1).finish();
+  satellite.stages.at(-1).finish();
+  await flush();
+  assert.deepEqual(
+    [radar.layer.getDiagnostics().time, satellite.layer.getDiagnostics().time],
+    [times[2], times[1]],
+  );
+  assert.deepEqual(radar.layer.getDiagnostics().clock, {
+    mode: 'latest',
+    target: null,
+    playing: false,
+  });
+  assert.deepEqual(
+    radar.layer.getParams(),
+    { opacity: 'strong' },
+    'history is never serialized',
+  );
+  satellite.layer.disable();
+  assert.equal(clock.getState().products.length, 1);
+});
+
+test('history manifest expiry hides imagery without jumping to latest; host resume keeps the target', async (t) => {
+  const clock = createWeatherClock();
+  let value = snapshot;
+  const h = layerHarness({ clock, feed: { getSnapshot: async () => value } });
+  t.after(() => {
+    h.layer.destroy();
+    clock.destroy();
+  });
+  let update = h.layer.update();
+  await flush();
+  h.stages.at(-1).finish();
+  await update;
+  const history = clock.setTarget(times[0]);
+  await flush();
+  h.stages.at(-1).finish();
+  await history;
+  value = { ...snapshot, times: [times[2]] };
+  await h.layer.update();
+  assert.equal(h.layer.getDiagnostics().hidden, true);
+  assert.equal(clock.getState().target, times[0]);
+  h.documentRef.hidden = true;
+  h.documentRef.emit('visibilitychange');
+  await flush();
+  assert.deepEqual(clock.getTimeline(), []);
+  h.documentRef.hidden = false;
+  h.documentRef.emit('visibilitychange');
+  await flush();
+  assert.equal(clock.getState().target, times[0]);
+  assert.equal(h.layer.getDiagnostics().hidden, true);
+  value = snapshot;
+  update = h.layer.update();
+  await flush();
+  h.stages.at(-1).finish();
+  await update;
+  assert.equal(h.layer.getDiagnostics().time, times[0]);
+});
+
+test('hidden renderer retains the frame without displaying it and rehome cannot reveal it', async () => {
+  const h = renderingHarness();
+  const first = h.rendering.setFrame(snapshot, times[0]);
+  h.settle();
+  await first;
+  const layer = h.layers[0];
+  const pending = h.rendering.setFrame(snapshot, times[1]);
+  h.rendering.setHidden(true);
+  assert.equal(await pending, false);
+  assert.equal(h.layers.length, 1);
+  assert.equal(h.layers[0], layer);
+  assert.equal(layer.show, false);
+  assert.equal(h.rendering.getDiagnostics().time, null);
+  h.rendering.rehome();
+  assert.equal(layer.show, false);
+  h.rendering.setHidden(false);
+  assert.equal(layer.show, true);
+  assert.equal(h.rendering.getDiagnostics().time, times[0]);
+  h.rendering.clear();
+});
+
+test('satellite global selection uses the three-hour gap and preserves the shared target on product changes', async (t) => {
+  const clock = createWeatherClock();
+  const earlier = '2026-09-15T18:00:00.000Z';
+  const h = layerHarness({
+    clock,
+    id: 'weather-satellite',
+    feed: {
+      getSnapshot: async ({ product }) => ({
+        ...snapshot,
+        product,
+        times: [earlier],
+        latest: earlier,
+      }),
+    },
+  });
+  t.after(() => {
+    h.layer.destroy();
+    clock.destroy();
+  });
+  const update = h.layer.update();
+  await flush();
+  h.stages.at(-1).finish();
+  await update;
+  await clock.setTarget(times[0]);
+  assert.equal(
+    h.layer.getDiagnostics().hidden,
+    true,
+    'two-hour regional gap is ineligible',
+  );
+  h.layer.setParams({ product: 'clouds' });
+  await flush();
+  assert.equal(h.stages.at(-1).time, earlier);
+  h.stages.at(-1).finish();
+  await flush();
+  assert.equal(clock.getState().target, times[0]);
+  assert.equal(h.layer.getDiagnostics().hidden, false);
+  assert.match(h.layer.getRowControls().summary.detail, /18:00 UTC.*nearest/);
+  const params = h.layer.getParams();
+  assert.equal(params.product, 'clouds');
+  assert.equal(params.target, undefined);
+});
+
+test('switching to history cancels a still-loading latest refresh and a later target cancels the first history load', async (t) => {
+  const clock = createWeatherClock();
+  const h = layerHarness({ clock });
+  t.after(() => {
+    h.layer.destroy();
+    clock.destroy();
+  });
+  const update = h.layer.update();
+  await flush();
+  const latest = h.stages.at(-1);
+  const oldHistory = clock.setTarget(times[0]);
+  await flush();
+  assert.equal(latest.signal.aborted, true);
+  const oldStage = h.stages.at(-1);
+  const current = clock.setTarget(times[1]);
+  await flush();
+  assert.equal(oldStage.signal.aborted, true);
+  h.stages.at(-1).finish();
+  await current;
+  latest.finish();
+  oldStage.finish();
+  await oldHistory;
+  await update;
+  assert.equal(h.layer.getDiagnostics().time, times[1]);
+  assert.equal(h.layer.getDiagnostics().clock.target, times[1]);
 });

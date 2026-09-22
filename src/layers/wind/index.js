@@ -30,6 +30,7 @@ export function windStats(manifest) {
 /** Construct one wind layer with an explicit source and owned animation. */
 export function createWindLayer({
   feed,
+  clock,
   cesium = Cesium,
   container,
   createRendering = createWindRendering,
@@ -60,6 +61,7 @@ export function createWindLayer({
   let generation = 0;
   let rowControlsListener = null;
   const notify = () => rowControlsListener?.();
+  const unsubscribeClock = clock?.subscribe(notify);
   const layer = {
     id: 'wind',
     name: 'Wind',
@@ -231,6 +233,10 @@ export function createWindLayer({
       return { model, overlay, paused, units };
     },
     getRowControls() {
+      const historyStatus =
+        clock?.getState().mode === 'history'
+          ? 'Forecast · does not follow history'
+          : null;
       const valid = formatWindValidTime(manifest?.cycle?.validIso);
       const run = formatWindValidTime(manifest?.cycle?.runIso);
       const diagnostic = rendering?.getDiagnostics?.();
@@ -273,15 +279,17 @@ export function createWindLayer({
         summary: {
           label,
           detail: `${model === 'ifs' ? 'ECMWF IFS' : 'GFS'} forecast · ${valid || 'Unavailable'}`,
-          status: loading
-            ? 'Loading forecast'
-            : preparing
-              ? 'Preparing flow'
-              : error ||
-                manifest?.reason ||
-                imageryError ||
-                (scalarMissing ? 'Selected field unavailable' : null) ||
-                (manifest?.stale ? 'Cached forecast · stale' : null),
+          status: historyStatus
+            ? historyStatus
+            : loading
+              ? 'Loading forecast'
+              : preparing
+                ? 'Preparing flow'
+                : error ||
+                  manifest?.reason ||
+                  imageryError ||
+                  (scalarMissing ? 'Selected field unavailable' : null) ||
+                  (manifest?.stale ? 'Cached forecast · stale' : null),
           units: legendUnit,
         },
         chips: [
@@ -347,7 +355,7 @@ export function createWindLayer({
           (overlay === 'none' && diagnostic?.renderMode === 'gpu-streamlines')
             ? []
             : legend,
-        info: `${model === 'ifs' ? 'ECMWF IFS' : 'GFS'} forecast · ${label} (${legendUnit})\nValid: ${valid || 'Unavailable'}${loading ? ' · loading' : preparing ? ' · preparing' : ''}\nIssued: ${run || 'Unavailable'}${manifest?.stale ? ' · STALE' : ''}${error ? '\n' + error : ''}${scalarMissing ? '\nSelected field unavailable · wind remains visible' : ''}${imageryError && !scalarMissing ? '\n' + imageryError + ' · wind remains visible' : ''}`,
+        info: `${model === 'ifs' ? 'ECMWF IFS' : 'GFS'} forecast · ${label} (${legendUnit})${historyStatus ? `\n${historyStatus}` : ''}\nValid: ${valid || 'Unavailable'}${loading ? ' · loading' : preparing ? ' · preparing' : ''}\nIssued: ${run || 'Unavailable'}${manifest?.stale ? ' · STALE' : ''}${error ? '\n' + error : ''}${scalarMissing ? '\nSelected field unavailable · wind remains visible' : ''}${imageryError && !scalarMissing ? '\n' + imageryError + ' · wind remains visible' : ''}`,
         infoTitle:
           'Surface wind at 10 m. Approximately 1° global grid. Curves follow the 10 m wind field, lifted 12 km for visibility; display height is not weather altitude. View lighting is for readability. Animation shows flow through one fixed forecast; it does not advance time. Color fields drape the globe basemap or the active photorealistic 3D Tiles.',
       };
@@ -358,6 +366,7 @@ export function createWindLayer({
     },
     destroy() {
       layer.disable();
+      unsubscribeClock?.();
       rendering?.destroy();
       rendering = null;
       imageryHost = null;

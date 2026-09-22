@@ -1,6 +1,12 @@
 import * as Cesium from 'cesium';
 import { createWeatherRendering } from './rendering.js';
 import { imageryHostStatus } from './imageryHost.js';
+import {
+  RADAR_MAX_GAP_MS,
+  REGIONAL_INFRARED_MAX_GAP_MS,
+  GLOBAL_INFRARED_MAX_GAP_MS,
+  LIGHTNING_MAX_GAP_MS,
+} from './clock.js';
 
 const STOPS = [
   [10, '#00ecec'],
@@ -29,6 +35,7 @@ const utc = (value) =>
  * row controls. History is transient: shared links always open latest imagery. */
 export function createWeatherLayer({
   feed,
+  clock,
   id = 'weather-radar',
   cesium = Cesium,
   createRendering = createWeatherRendering,
@@ -63,22 +70,38 @@ export function createWeatherLayer({
   let hostCollection;
   let hostHidden = false;
   let hostStatus = null;
+  let unregisterClock = null;
+  let frameRequest = null;
+  let noFrame = false;
+  const maxGap = () =>
+    radar
+      ? RADAR_MAX_GAP_MS
+      : lightning
+        ? LIGHTNING_MAX_GAP_MS
+        : product === 'clouds'
+          ? GLOBAL_INFRARED_MAX_GAP_MS
+          : REGIONAL_INFRARED_MAX_GAP_MS;
+  const isLatest = () =>
+    clock ? clock.getState().mode === 'latest' : followLatest;
   const getHost = () =>
     imageryHost?.() ?? { collection: viewer?.imageryLayers, kind: 'globe' };
   const notify = () => listener?.();
-  const shownTime = () => rendering?.getDiagnostics().time;
+  const shownTime = () => (noFrame ? null : rendering?.getDiagnostics().time);
+  const unsubscribeClock = clock?.subscribe(notify);
   const observationDelayed = () =>
     manifest?.latest &&
     Date.now() - Date.parse(manifest.latest) >
       (product === 'clouds' ? 240 : lightning ? 45 : 20) * 60_000;
   const stop = () => {
+    if (clock) return;
     playing = false;
     clearTimeout(timer);
     timer = null;
   };
   const suspended = () => hostHidden || documentRef?.hidden || motion?.matches;
   const onVisibility = () => {
-    if (suspended()) stop();
+    if (clock) void clock.refresh();
+    else if (suspended()) stop();
     notify();
   };
 
@@ -96,6 +119,14 @@ export function createWeatherLayer({
     clearTimeout(timer);
     timer = null;
     loading = Boolean(request && !request.signal.aborted);
+    if (clock && enabled) {
+      if (resume) {
+        void clock.refresh();
+        if (!hostHidden && manifest && isLatest()) void show(manifest.latest);
+      }
+      notify();
+      return;
+    }
     if (resume && enabled && !hostHidden && manifest) {
       const time =
         followLatest || !manifest.times.includes(shownTime())
@@ -113,6 +144,7 @@ export function createWeatherLayer({
   const onMapStackChanged = () => checkHost();
 
   function schedule() {
+    if (clock) return;
     clearTimeout(timer);
     timer = null;
     if (!enabled || !playing || suspended()) return;
@@ -124,29 +156,71 @@ export function createWeatherLayer({
       else stop();
     }, 2000);
   }
+  async function applyClockTime(time, { signal }) {
+    if (!enabled || signal.aborted) return false;
+    if (time !== null) return show(time, signal);
+    ++generation;
+    frameRequest?.abort();
+    frameRequest = null;
+    noFrame = true;
+    rendering?.setHidden(true);
+    loading = Boolean(request && !request.signal.aborted);
+    notify();
+    return true;
+  }
+  function registerClock() {
+    if (!clock || unregisterClock || !rendering || !enabled) return;
+    unregisterClock = clock.register({
+      id,
+      get maxGapMs() {
+        return maxGap();
+      },
+      getTimes: () => manifest?.times ?? [],
+      getShownTime: shownTime,
+      apply: applyClockTime,
+      isSuspended: suspended,
+    });
+  }
   async function show(time, signal) {
     checkHost(false);
     if (!enabled || hostHidden || !manifest?.times?.includes(time))
       return false;
+    signal?.throwIfAborted();
+    frameRequest?.abort();
+    const controller = new AbortController();
+    frameRequest = controller;
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
     const owner = ++generation;
     loading = true;
     notify();
     try {
-      const ok = await rendering.setFrame(manifest, time, { signal, infrared });
-      if (owner !== generation || !enabled || signal?.aborted) return false;
+      const ok = await rendering.setFrame(manifest, time, {
+        signal: controller.signal,
+        infrared,
+      });
+      if (owner !== generation || !enabled || controller.signal.aborted)
+        return false;
+      if (ok) {
+        noFrame = false;
+        rendering.setHidden?.(false);
+      }
       error = ok ? null : 'Frame unavailable; previous observation retained';
       if (!ok) stop();
       return ok;
     } catch {
-      if (owner === generation) {
+      if (owner === generation && !controller.signal.aborted) {
         error = 'Weather imagery unavailable';
         stop();
       }
       return false;
     } finally {
+      signal?.removeEventListener('abort', abort);
+      if (frameRequest === controller) frameRequest = null;
       if (owner === generation) {
         loading = Boolean(request && !request.signal.aborted);
         notify();
+        if (clock && isLatest()) void clock.refresh();
         schedule();
       }
     }
@@ -178,6 +252,7 @@ export function createWeatherLayer({
       motion = matchMedia?.('(prefers-reduced-motion: reduce)');
       motion?.addEventListener?.('change', onVisibility);
       documentRef?.addEventListener?.('visibilitychange', onVisibility);
+      registerClock();
       removeCamera = viewer.camera.moveEnd?.addEventListener(() => {
         checkHost();
         if (enabled) notify();
@@ -197,10 +272,16 @@ export function createWeatherLayer({
     },
     enable() {
       enabled = true;
+      registerClock();
     },
     disable() {
       enabled = false;
+      unregisterClock?.();
+      unregisterClock = null;
       ++generation;
+      frameRequest?.abort();
+      frameRequest = null;
+      noFrame = false;
       request?.abort();
       request = null;
       stop();
@@ -241,6 +322,18 @@ export function createWeatherLayer({
         }
         manifest = snapshot;
         error = null;
+        if (clock) {
+          await clock.refresh();
+          if (
+            isLatest() &&
+            request === controller &&
+            !controller.signal.aborted
+          )
+            await show(snapshot.latest, controller.signal);
+          return (
+            !controller.signal.aborted && request === controller && enabled
+          );
+        }
         const time =
           followLatest || !snapshot.times.includes(shownTime())
             ? snapshot.latest
@@ -283,6 +376,9 @@ export function createWeatherLayer({
       ) {
         product = params.product;
         ++generation;
+        frameRequest?.abort();
+        frameRequest = null;
+        noFrame = false;
         request?.abort();
         request = null;
         stop();
@@ -291,12 +387,14 @@ export function createWeatherLayer({
         loading = false;
         followLatest = true;
         rendering?.clear();
+        if (clock) void clock.refresh();
         if (enabled) void layer.update(viewer);
       }
       if (infraredChanged && enabled && manifest) {
         clearTimeout(timer);
         timer = null;
-        void show(shownTime() || manifest.latest);
+        if (clock && !isLatest()) void clock.refresh();
+        else void show(shownTime() || manifest.latest);
       }
       if (
         params.focus === true &&
@@ -319,7 +417,13 @@ export function createWeatherLayer({
           }),
         );
       }
+      if (clock && enabled) {
+        if (params.play === true) void clock.togglePlay();
+        if (params.latest === true) void clock.latest();
+        if ([-1, 1].includes(params.step)) void clock.step(params.step);
+      }
       if (
+        !clock &&
         params.play === true &&
         enabled &&
         manifest?.times?.length > 1 &&
@@ -330,12 +434,12 @@ export function createWeatherLayer({
         if (playing) schedule();
         else stop();
       }
-      if (params.latest === true && manifest) {
+      if (!clock && params.latest === true && manifest) {
         stop();
         followLatest = true;
         void show(manifest.latest);
       }
-      if ([-1, 1].includes(params.step) && manifest && !loading) {
+      if (!clock && [-1, 1].includes(params.step) && manifest && !loading) {
         stop();
         followLatest = false;
         const at = manifest.times.indexOf(shownTime());
@@ -355,7 +459,32 @@ export function createWeatherLayer({
           : { product, opacity };
     },
     getRowControls() {
+      const shared = clock?.getState();
+      const followLatest = isLatest();
+      const sharedTimes = shared?.timeline ?? [];
+      const at = shared?.target ?? sharedTimes.at(-1);
+      const canEarlier = sharedTimes.some(
+        (time) => Date.parse(time) < Date.parse(at),
+      );
+      const canLater = sharedTimes.some(
+        (time) => Date.parse(time) > Date.parse(at),
+      );
+      const sharedPlaying = shared?.playing ?? playing;
+      const missing =
+        noFrame &&
+        shared?.mode === 'history' &&
+        shared.products.find((entry) => entry.id === id)?.selected === null
+          ? `No frame within ${maxGap() / 60_000 < 60 ? `${maxGap() / 60_000} min` : `${maxGap() / 3600_000} h`} of ${utc(shared.target)}`
+          : null;
       const time = shownTime();
+      const relation =
+        shared?.mode === 'history' && time
+          ? Date.parse(time) === Date.parse(shared.target)
+            ? ' · synced'
+            : Date.parse(time) < Date.parse(shared.target)
+              ? ' · nearest'
+              : ''
+          : '';
       const times = manifest?.times || [];
       const index = times.indexOf(time);
       const current = index >= 0;
@@ -403,9 +532,12 @@ export function createWeatherLayer({
                 ? 'Satellite infrared · global'
                 : 'Satellite infrared · N. America',
           detail: time
-            ? `${followLatest ? 'Observed' : 'History'} · ${utc(time)} · ${lag}`
-            : 'Waiting for observation',
+            ? `${followLatest ? 'Observed' : 'History'} · ${utc(time)} · ${lag}${relation}`
+            : missing
+              ? 'Observation unavailable'
+              : 'Waiting for observation',
           status:
+            missing ||
             hostStatus ||
             error ||
             diagnostic?.error ||
@@ -458,27 +590,34 @@ export function createWeatherLayer({
           {
             id: 'previous',
             label: '‹ Earlier',
-            disabled: hostHidden || loading || index <= 0,
+            disabled: shared
+              ? !canEarlier
+              : hostHidden || loading || index <= 0,
             params: { step: -1 },
             title: 'Previous observed frame',
           },
           {
             id: 'play',
-            label: playing && !hostHidden ? 'Pause' : 'Play history',
-            active: playing && !hostHidden,
-            disabled:
-              hostHidden ||
-              (loading && !playing) ||
-              times.length < 2 ||
-              !!motion?.matches,
+            label:
+              sharedPlaying && (shared || !hostHidden)
+                ? 'Pause'
+                : 'Play history',
+            active: Boolean(sharedPlaying && (shared || !hostHidden)),
+            disabled: shared
+              ? sharedTimes.length < 2
+              : hostHidden ||
+                (loading && !playing) ||
+                times.length < 2 ||
+                !!motion?.matches,
             params: { play: true },
             title: 'Replay recent observations; this is not a forecast',
           },
           {
             id: 'next',
             label: 'Later ›',
-            disabled:
-              hostHidden || loading || !current || index >= times.length - 1,
+            disabled: shared
+              ? !canLater
+              : hostHidden || loading || !current || index >= times.length - 1,
             params: { step: 1 },
             title: 'Next observed frame',
           },
@@ -486,7 +625,9 @@ export function createWeatherLayer({
             id: 'latest',
             label: 'Latest',
             active: followLatest,
-            disabled: hostHidden || !manifest,
+            disabled: shared
+              ? shared.products.length === 0
+              : hostHidden || !manifest,
             params: { latest: true },
             title: lightning
               ? 'Follow the newest observation; refresh every ten minutes'
@@ -522,7 +663,7 @@ export function createWeatherLayer({
             : [],
         info: hostHidden
           ? hostStatus
-          : `${radar ? 'RADAR REFLECTIVITY · dBZ' : lightning ? 'LIGHTNING DENSITY · 15 min accumulation' : product === 'clouds' ? 'GLOBAL INFRARED · hourly' : 'GOES INFRARED · ~5 min'}\n${time ? `${followLatest ? 'Latest observation' : 'History'}: ${utc(time)}\n${lag}${current && !followLatest ? ` · frame ${index + 1}/${times.length}` : ''}${loading ? ' · loading' : ''}` : `Observation: unavailable${loading ? ' · loading' : ''}`}${manifest?.stale ? '\nSTALE · cached source metadata' : ''}${error || diagnostic?.error ? '\n' + (error || diagnostic.error) : ''}\n${radar ? 'Contiguous US · gaps ≠ no rain' : lightning ? 'Americas + Pacific · not individual strikes\nColor: strikes/km²/min ×10³' : product === 'clouds' ? '60°S–60°N · typically 2–3 h delayed' : 'North America · infrared imagery'}${outside ? '\nMap center is outside source coverage' : ''}${motion?.matches ? '\nReduced motion · manual history available' : ''}`,
+          : `${radar ? 'RADAR REFLECTIVITY · dBZ' : lightning ? 'LIGHTNING DENSITY · 15 min accumulation' : product === 'clouds' ? 'GLOBAL INFRARED · hourly' : 'GOES INFRARED · ~5 min'}\n${time ? `${followLatest ? 'Latest observation' : 'History'}: ${utc(time)}\n${lag}${current && !followLatest ? ` · frame ${index + 1}/${times.length}` : ''}${loading ? ' · loading' : ''}` : `Observation: unavailable${loading ? ' · loading' : ''}`}${missing ? `\n${missing}` : ''}${manifest?.stale ? '\nSTALE · cached source metadata' : ''}${error || diagnostic?.error ? '\n' + (error || diagnostic.error) : ''}\n${radar ? 'Contiguous US · gaps ≠ no rain' : lightning ? 'Americas + Pacific · not individual strikes\nColor: strikes/km²/min ×10³' : product === 'clouds' ? '60°S–60°N · typically 2–3 h delayed' : 'North America · infrared imagery'}${outside ? '\nMap center is outside source coverage' : ''}${motion?.matches ? (clock ? '\nReduced motion · history playback unavailable' : '\nReduced motion · manual history available') : ''}`,
         infoTitle: lightning
           ? 'NOAA/NWS 15-minute lightning density derived from Vaisala NLDN/GLD360. Coverage 110°E across the Pacific/Americas to 0°, 25°S–80°N. Not a live strike count, global coverage or a safety warning.'
           : radar
@@ -536,7 +677,7 @@ export function createWeatherLayer({
     getStats() {
       return {
         count: shownTime() ? 1 : 0,
-        countLabel: followLatest ? 'Observed' : 'History',
+        countLabel: isLatest() ? 'Observed' : 'History',
         lastUpdate: shownTime() ? Date.parse(shownTime()) : null,
         loading,
         error: error || rendering?.getDiagnostics().error || null,
@@ -546,16 +687,27 @@ export function createWeatherLayer({
       };
     },
     getDiagnostics() {
+      const shared = clock?.getState();
       return {
         ...rendering?.getDiagnostics(),
-        playing: playing && !hostHidden,
-        followLatest,
+        playing: shared ? shared.playing : playing && !hostHidden,
+        followLatest: isLatest(),
+        ...(shared
+          ? {
+              clock: {
+                mode: shared.mode,
+                target: shared.target,
+                playing: shared.playing,
+              },
+            }
+          : {}),
         historyFrames: manifest?.times?.length || 0,
         timerActive: timer !== null,
       };
     },
     destroy() {
       layer.disable();
+      unsubscribeClock?.();
       removeCamera?.();
       removeCamera = null;
       motion?.removeEventListener?.('change', onVisibility);

@@ -2,6 +2,13 @@
 
 ## Unreleased — weather review
 
+- Share one observed history clock across radar, infrared and lightning. Step
+  through their union timeline with bounded nearest-at-or-before selection;
+  hide products without an eligible frame. Latest uses each product's newest
+  observation; playback waits for all frame loads to settle before advancing.
+- Label wind as a forecast that does not follow observed history. Keep history
+  transient and the existing row controls synchronized.
+
 - Keep Google 3D Tiles drawing while draped weather imagery loads and retain the
   old observation until the replacement has rendered.
 - Decode one bounded global infrared mosaic per frame on both map hosts, then
