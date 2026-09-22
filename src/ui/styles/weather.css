@@ -1,185 +1,3 @@
-/* Weather rows hold status and configuration; readouts live in the rail. */
-[data-layer-id='wind'] .data-toggle-controls:not([hidden]) {
-  display: grid;
-  grid-template-columns: repeat(60, minmax(0, 1fr));
-  gap: 5px 0;
-  margin-left: 0;
-  padding-left: 0;
-  margin-top: 9px;
-}
-[data-layer-id='wind'] .data-toggle-chip {
-  grid-column: span 20;
-  margin-inline: 2px;
-  color: #a9b8bc;
-  letter-spacing: 0.5px;
-  padding-inline: 3px;
-}
-[data-layer-id='wind'] [data-chip-id^='overlay-'] {
-  grid-column: span 30;
-}
-[data-layer-id='wind'] .data-toggle-chip.active {
-  color: #70f0ff;
-}
-[data-layer-id='wind'] .data-toggle-chip:disabled {
-  opacity: 0.45;
-}
-[data-layer-id='wind'] .data-toggle-controls-info {
-  grid-column: 1 / -1;
-}
-/* Readout rows keep one reserved status line; details live in the WEATHER panel. */
-.data-toggle-controls-status {
-  flex-basis: 100%;
-  grid-column: 1 / -1;
-  min-height: 1.4em;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--text-secondary);
-  padding-top: 3px;
-  overflow-wrap: anywhere;
-}
-[data-layer-id='wind'] .data-toggle-legend-item {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
-  min-width: 0;
-  margin-top: 7px;
-  color: #b9ccd0;
-  font-size: 9px;
-  text-align: center;
-}
-[data-layer-id='wind'] .data-toggle-legend-swatch {
-  width: 100%;
-  height: 4px;
-  border-radius: 1px;
-}
-/* Weather is one optional instrument within the existing layer panel. */
-[data-layer-id='wind'] .data-toggle-controls-info {
-  white-space: pre-line;
-  line-height: 1.6;
-  font-size: 10px;
-  color: #b9ccd0;
-  margin-top: 7px;
-}
-[data-layer-id='wind'] .data-toggle-chip {
-  min-height: 30px;
-  padding: 5px 8px;
-  border-radius: 4px;
-  font-size: 10px;
-}
-[data-layer-id='wind'] .data-toggle-chip:focus-visible {
-  outline: 2px solid #89e5e5;
-  outline-offset: 2px;
-}
-[data-layer-id='wind'] [data-chip-id='inspect-center'] {
-  grid-column: 1 / -1;
-  text-align: center;
-  min-height: 36px;
-}
-@media (max-width: 600px) {
-  [data-layer-id='wind'] .data-toggle-chip {
-    min-height: 40px;
-  }
-}
-
-/* Observed weather reuses the same accessible layer-row controls. */
-:is(
-    [data-layer-id='weather-radar'],
-    [data-layer-id='weather-satellite'],
-    [data-layer-id='weather-lightning']
-  )
-  .data-toggle-controls:not([hidden]) {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 5px;
-  margin: 9px 0 0;
-  padding: 0;
-}
-:is(
-    [data-layer-id='weather-radar'],
-    [data-layer-id='weather-satellite'],
-    [data-layer-id='weather-lightning']
-  )
-  .data-toggle-chip {
-  grid-column: span 4;
-  min-height: 32px;
-  padding: 5px 3px;
-  border-radius: 4px;
-  font-size: 10px;
-  letter-spacing: 0.4px;
-}
-:is(
-    [data-layer-id='weather-radar'],
-    [data-layer-id='weather-satellite'],
-    [data-layer-id='weather-lightning']
-  )
-  [data-chip-id='coverage'] {
-  grid-column: 1 / -1;
-}
-:is(
-    [data-layer-id='weather-radar'],
-    [data-layer-id='weather-satellite'],
-    [data-layer-id='weather-lightning']
-  )
-  .data-toggle-chip:focus-visible {
-  outline: 2px solid #89e5e5;
-  outline-offset: 2px;
-}
-:is(
-    [data-layer-id='weather-radar'],
-    [data-layer-id='weather-satellite'],
-    [data-layer-id='weather-lightning']
-  )
-  .data-toggle-chip:disabled {
-  opacity: 0.4;
-}
-:is(
-    [data-layer-id='weather-radar'],
-    [data-layer-id='weather-satellite'],
-    [data-layer-id='weather-lightning']
-  )
-  .data-toggle-controls-info {
-  grid-column: 1 / -1;
-  white-space: pre-line;
-  line-height: 1.6;
-  font-size: 10px;
-  color: #b9ccd0;
-  margin-top: 7px;
-}
-:is([data-layer-id='weather-radar'], [data-layer-id='weather-lightning'])
-  .data-toggle-legend-item {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  font-size: 9px;
-  text-align: center;
-}
-:is([data-layer-id='weather-radar'], [data-layer-id='weather-lightning'])
-  .data-toggle-legend-swatch {
-  width: 100%;
-  height: 4px;
-  border-radius: 1px;
-}
-@media (max-width: 600px) {
-  :is(
-      [data-layer-id='weather-radar'],
-      [data-layer-id='weather-satellite'],
-      [data-layer-id='weather-lightning']
-    )
-    .data-toggle-chip {
-    min-height: 40px;
-  }
-}
-
-[data-layer-id='wind'] .data-toggle-legend-item {
-  grid-column: span 10;
-}
-[data-layer-id='wind']:has([data-chip-id='overlay-temperature'].active)
-  .data-toggle-legend-item {
-  grid-column: span 6;
-}
-
 /* The rail owns placement and height; only the product body scrolls. */
 .weather-panel-inner {
   position: relative;
@@ -242,42 +60,47 @@
 #weather-panel.collapsed .weather-panel-inner {
   padding-bottom: 10px;
 }
-/* Shared readout primitives also fit other managed rail panels. */
+/* Card typography follows the layer rows and app tokens. */
 .weather-readout,
 .rail-card,
 .rail-timeline {
   min-width: 0;
-  color: #dcebf0;
-  font:
-    11px/1.45 system-ui,
-    sans-serif;
+  color: var(--text-dim);
+  font: 9px/1.45 var(--font-mono);
+  letter-spacing: 0.5px;
 }
 .rail-card {
   padding: 8px 5px;
   overflow-wrap: anywhere;
 }
 .rail-card + .rail-card {
-  border-top: 1px solid #ffffff16;
+  border-top: 1px solid var(--glass-border);
 }
 .rail-card-header {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
+  align-items: baseline;
+  gap: 8px;
 }
 .rail-card-title {
   flex: 1 1 auto;
-  font-size: 12px;
   min-width: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  letter-spacing: 0.3px;
 }
 .rail-card-badge {
-  font-size: 9px;
-  font-variant-caps: all-small-caps;
-  color: #afc5ce;
+  flex: 0 1 45%;
+  text-align: right;
 }
-.rail-card-header .data-toggle-chip {
-  flex: 0 0 auto;
+.rail-card-badge,
+.rail-card-line,
+.rail-timeline-readout {
+  font-family: var(--font-mono);
   font-size: 9px;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
 }
 .rail-card-lines {
   margin-top: 4px;
@@ -285,14 +108,10 @@
 .rail-card-line {
   white-space: pre-line;
 }
-.rail-card-line.muted,
-.rail-card-scale {
-  color: #afc5ce;
-  font-size: 10px;
-}
 .weather-card [data-line-id='status'] {
-  min-height: 1.45em;
-  color: #ffd595;
+  height: 2.9em;
+  overflow-y: auto;
+  color: var(--accent);
 }
 .rail-card-ramp {
   position: relative;
@@ -302,13 +121,46 @@
 }
 .rail-card-scale {
   text-align: right;
+  font: 9px/1.45 var(--font-mono);
   font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
 }
-.rail-card-actions {
+.rail-card-actions,
+.rail-card-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
+  min-width: 0;
+}
+.rail-card .data-toggle-chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.rail-card-section {
+  margin-top: 8px;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 6px;
+}
+.rail-card-disclosure {
+  display: block;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 0;
+  max-width: 100%;
+}
+.rail-card .data-row-list {
+  padding-left: 0;
+  margin-left: 0;
+}
+.rail-card .data-row-list-item {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.5px;
 }
 .rail-card [hidden],
 .weather-timeline-block[hidden] {
@@ -316,18 +168,26 @@
 }
 .rail-timeline {
   padding: 5px;
-  border-bottom: 1px solid #ffffff16;
+  border-bottom: 1px solid var(--glass-border);
 }
 .rail-timeline-track {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+  margin-top: 6px;
 }
 .rail-timeline-track input {
   min-width: 0;
   width: 100%;
   margin: 0;
+}
+.rail-timeline-endpoints {
+  display: flex;
+  justify-content: space-between;
+  margin: 3px 29px 0;
+  font: 8px/1.45 var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .rail-timeline-controls {
   display: flex;
@@ -339,39 +199,20 @@
 .rail-timeline-readout {
   flex: 1 1 120px;
   min-width: 0;
-  font-size: 10px;
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
-.data-toggle-controls-status {
-  flex-basis: 100%;
-  grid-column: 1 / -1;
-  order: -1;
-  min-height: 1.45em;
-  font-size: 10px;
-  color: #b9ccd0;
-}
-
 body.ui-clean-view .gev-wind-inspection-marker,
-body.recording-mode .gev-wind-inspection-marker,
-body.ui-clean-view .gev-wind-reading,
-body.recording-mode .gev-wind-reading {
+body.recording-mode .gev-wind-inspection-marker {
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
-}
-
-/* Inspection temporarily gives the map room; closing it restores the same controls. */
-@media (max-width: 720px) {
-  body:has(.gev-wind-reading:not([hidden])) #left-panel-stack {
-    display: none;
-  }
 }
 .rail-card-zero {
   position: absolute;
   top: -2px;
   height: 8px;
-  border-left: 1px solid #fff;
+  border-left: 1px solid var(--text-primary);
 }
 .rail-card-zero::after {
   content: '0°C';
@@ -379,6 +220,6 @@ body.recording-mode .gev-wind-reading {
   top: 8px;
   left: 0;
   transform: translateX(-50%);
-  font-size: 9px;
-  color: #e8f4f7;
+  font: 9px/1.45 var(--font-mono);
+  color: var(--text-dim);
 }

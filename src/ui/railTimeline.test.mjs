@@ -97,3 +97,21 @@ test('identical updates write nothing; controls call actions and destruction can
   assert.equal(calls.length, 5);
   assert.equal(f.container.children.length, 0);
 });
+
+test('observed history label and endpoint times track the advertised tick range', () => {
+  const f = railFixture();
+  const view = createRailTimeline(f);
+  view.update(props);
+  assert.equal(
+    f.find((n) => n.className === 'panel-title').textContent,
+    'Observed history',
+  );
+  const endpoints = f.find((n) => n.className === 'rail-timeline-endpoints');
+  assert.deepEqual(
+    endpoints.children.map((n) => n.textContent),
+    ['01:00 UTC', '01:10 UTC'],
+  );
+  view.update({ ...props, ticks: ticks.slice(1) });
+  assert.equal(endpoints.children[0].textContent, '01:05 UTC');
+  view.destroy();
+});

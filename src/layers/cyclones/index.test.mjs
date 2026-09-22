@@ -475,6 +475,9 @@ test('advisory selection uses accessible row descriptors and shared camera hando
   assert.equal(controls.summary.coverage, 'Atlantic + E/C Pacific');
   assert.equal(controls.summary.advisoryUrl, storm().advisoryUrl);
   assert.equal(controls.summary.lines.length, 3);
+  assert.deepEqual(controls.summary.sections, [
+    { id: 'storms', label: 'Storms', list: controls.list },
+  ]);
   assert.match(controls.list.ariaLabel, /NHC/);
   assert.equal(controls.list.items.length, 2);
   assert.equal(controls.list.items[0].active, true);

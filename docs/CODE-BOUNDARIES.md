@@ -289,17 +289,36 @@ session, and only when the chrome marked the restored state as a default
 (`data-collapsed-preference`), never over a stored or shared choice. Preserve
 the user's later collapse choice, including body remounts.
 
-Compose `createRailCards({ container, document })` and
+Compose `createRailCards({ container, document, onParams })` and
 `createRailTimeline({ container, document, onCommit, onPreview, onStep,
-onLatest, onPlay })`. Cards reconcile `id`, title, badge, keyed lines, legend
-and keyed actions in place; actions use buttons or new-tab links in a footer.
-An action may opt into `placement: 'header'` and supply a `dataset` for compact
-Controls buttons. Optional card/badge/slider class names provide feature styling.
-The timeline receives ticks, index, mode, playing, readout and disabled state.
-Its preview callback receives the tick and index and may return readout text;
-commits receive the same values after a 150 ms coalesced drag or final change.
-Feature adapters own data mapping and service subscriptions; generic modules
-own DOM/listeners/timers and release them in `destroy()`.
+onLatest, onPlay })`. Cards reconcile `id`, title, badge, keyed lines, legend,
+ordered `sections`, and keyed footer actions in place. Footer actions use buttons
+or new-tab links. A section has `{ id, label, chips?, list?, lines?, actions? }`:
+chips use the shared `syncChipGroup` in `chipGroup.js`; lists use the shared
+`syncRowList` in `rowList.js` with `.data-row-list` markup. Every item has a stable
+id. Chip/list/action `params` dispatch through `onParams(cardId, params)`; the
+feature adapter supplies `setLayerParams(id, params, { origin: 'user' })`.
+Descriptors are read afresh at dispatch, including disabled state.
+
+Sections have native disclosure buttons with `aria-expanded` and `aria-controls`.
+Reading defaults open; settings and storms default closed. Disclosure choices are
+remembered by document, card namespace, card id and section id for the page session,
+including removal/re-enable and body remount. They do not enter share state.
+Weather descriptors retain top-level chips/list/legend for non-DOM consumers and
+add `summary.sections`; wind adds `summary.reading` for its captured inspection.
+`readout: true` layer rows render only the toggle and source/meta line; their
+subscriptions still refresh the cards. Cards own all configuration and readings.
+
+Optional card/badge/slider class names provide feature styling. Card titles use
+`.data-name` typography; meta/time/badges use `.data-toggle-meta` typography;
+section headings use `.panel-title`; chips retain `.data-toggle-chip`. Keep a
+reserved status line so playback does not change card height. Use app tokens.
+The timeline labels observed history, shows endpoint times, and receives ticks,
+index, mode, playing, readout and disabled state. Its preview callback receives
+the tick and index and may return readout text; commits receive the same values
+after a 150 ms coalesced drag or final change. Feature adapters own data mapping
+and service subscriptions; generic modules own DOM/listeners/timers and release
+them in `destroy()`.
 
 Keep persistence with panel chrome: collapse uses
 `godsEyeView.v6.panelCollapsed.<panelId>`, position uses

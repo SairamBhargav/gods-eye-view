@@ -99,19 +99,17 @@ test('timeline needs an observed product and two union times; native preview and
   view.destroy();
   assert.equal(f.listeners.size, 0);
 });
-test('ordered articles contain Controls and displayed-frame history labels, forecast dates and missing-frame readouts', () => {
+test('ordered articles omit Controls and retain history labels, forecast dates and missing-frame readouts', () => {
   const f = fixture();
-  const opened = [];
-  const view = createWeatherPanel({ ...f, onOpen: (id) => opened.push(id) });
+  const view = createWeatherPanel(f);
   view.update([radar, wind]);
   const windCard = card(f, 'wind');
   assert.equal(windCard.tagName, 'ARTICLE');
   assert.equal(windCard.parent.children[0], windCard);
-  const controls = f.find((n) => n.dataset.weatherOpen === 'wind');
-  assert.equal(controls.tagName, 'BUTTON');
-  assert.equal(controls.parent.tagName, 'HEADER');
-  controls.click();
-  assert.deepEqual(opened, ['wind']);
+  assert.equal(
+    f.find((n) => n.dataset.weatherOpen),
+    null,
+  );
   assert.match(
     line(f, 'wind', 'time').textContent,
     /Forecast · valid .*UTC · issued .*UTC/,
@@ -139,8 +137,6 @@ test('ordered articles contain Controls and displayed-frame history labels, fore
     'No frame within 3 h of 01:05 UTC',
   );
   view.destroy();
-  controls.click();
-  assert.deepEqual(opened, ['wind']);
 });
 test('cyclone readout retains advisory, position, intensity, geometry, coverage, legend and source link', () => {
   const f = fixture();
@@ -261,5 +257,74 @@ test('a stored or shared collapse choice is not overridden on first appearance',
   const view = createWeatherPanel(f);
   view.update([radar]);
   assert.equal(f.clicks(), 1, 'a default state still expands once');
+  view.destroy();
+});
+
+test('card configuration and reading actions pass the layer id, params and user origin', async () => {
+  const { windReadingSection } = await import('../layers/wind/presentation.js');
+  const f = fixture();
+  const calls = [];
+  const view = createWeatherPanel({
+    ...f,
+    setLayerParams: (...args) => calls.push(args),
+  });
+  const reading = {
+    coordinates: '41.9°N · 87.6°W',
+    wind: '18.0 km/h from SW',
+    speed: 5,
+    from: 'SW',
+    units: 'km/h',
+    model: 'NOAA GFS',
+    validTime: '2026-09-21 12:00 UTC',
+    explanation: 'Interpolated model forecast.',
+  };
+  const summary = { ...wind.summary, reading };
+  summary.sections = [
+    {
+      id: 'settings',
+      label: 'Settings',
+      chips: [
+        {
+          id: 'inspect-center',
+          label: 'Inspect center',
+          params: { inspect: true },
+        },
+      ],
+    },
+    windReadingSection(summary.reading),
+  ];
+  view.update([
+    { ...wind, summary },
+    {
+      ...radar,
+      summary: {
+        ...radar.summary,
+        sections: [
+          {
+            id: 'settings',
+            label: 'Settings',
+            chips: [
+              { id: 'soft', label: 'Soft', params: { opacity: 'light' } },
+            ],
+          },
+        ],
+      },
+    },
+  ]);
+  f.find((n) => n.dataset.chipId === 'inspect-center').click();
+  f.find((n) => n.dataset.chipId === 'soft').click();
+  f.find((n) => n.dataset.chipId === 'units-mph').click();
+  f.find((n) => n.dataset.actionId === 'clear').click();
+  assert.deepEqual(calls, [
+    ['wind', { inspect: true }, { origin: 'user' }],
+    ['weather-radar', { opacity: 'light' }, { origin: 'user' }],
+    ['wind', { units: 'mph' }, { origin: 'user' }],
+    ['wind', { inspect: false }, { origin: 'user' }],
+  ]);
+  assert.equal(
+    line(f, 'wind', 'coordinates').textContent,
+    summary.reading.coordinates,
+  );
+  assert.equal(line(f, 'wind', 'wind').textContent, summary.reading.wind);
   view.destroy();
 });

@@ -1,7 +1,11 @@
 import * as Cesium from 'cesium';
 import { createWindRendering } from './rendering.js';
 import { WIND_FIELDS } from './fields.js';
-import { createWindPresentation } from './presentation.js';
+import {
+  formatWindReading,
+  windReadingSection,
+  windUnitChips,
+} from './presentation.js';
 import {
   inspectWindAtCenter,
   createWindInspectionMarker,
@@ -34,7 +38,6 @@ export function createWindLayer({
   cesium = Cesium,
   container,
   createRendering = createWindRendering,
-  createPresentation = createWindPresentation,
 } = {}) {
   if (typeof feed?.getSnapshot !== 'function')
     throw new TypeError('Wind requires a snapshot source');
@@ -50,10 +53,10 @@ export function createWindLayer({
   let overlay = 'none';
   let paused = false;
   let units = 'km/h';
-  let presentation = null;
+  let reading = null;
   let inspectionMarker = null;
   const hideInspection = () => {
-    presentation?.hide();
+    reading = null;
     inspectionMarker?.clear();
   };
   const requestedScalar = () =>
@@ -84,12 +87,6 @@ export function createWindLayer({
       rendering.attach();
       rendering.setOptions?.({ overlay, paused });
       const target = container ?? nextViewer.container;
-      if (target?.appendChild && target.ownerDocument?.createElement)
-        presentation = createPresentation({
-          container: target,
-          onClose: () => inspectionMarker?.clear(),
-          onUnits: (units) => layer.setParams({ units }),
-        });
       inspectionMarker = createWindInspectionMarker({
         container: target,
         viewer,
@@ -182,7 +179,8 @@ export function createWindLayer({
       if (overlayChanged) overlay = params.overlay;
       rendering?.setOptions?.({ overlay, paused });
       if (modelChanged || overlayChanged) hideInspection();
-      else if (unitsChanged) presentation?.setUnits?.(units);
+      else if (unitsChanged) reading = formatWindReading(reading, units);
+      if (params.inspect === false) hideInspection();
       if (modelChanged) {
         manifest = null;
         error = null;
@@ -214,7 +212,7 @@ export function createWindLayer({
           rendering?.start();
       }
       if (params.inspect === true && enabled) {
-        const reading = inspectWindAtCenter(manifest, viewer, cesium, {
+        reading = inspectWindAtCenter(manifest, viewer, cesium, {
           units,
           overlay,
           model: model === 'ifs' ? 'ECMWF IFS' : 'NOAA GFS',
@@ -227,7 +225,6 @@ export function createWindLayer({
               (manifest?.stale ? 'Cached forecast · stale' : 'Model forecast'),
         });
         inspectionMarker?.show(reading.position);
-        presentation?.show(reading);
       }
       notify();
     },
@@ -281,7 +278,7 @@ export function createWindLayer({
         !imageryError &&
         (overlay === 'speed' ||
           (overlay === 'none' && diagnostic?.renderMode === 'canvas-fallback'));
-      return {
+      const controls = {
         readout: true,
         summary: {
           label,
@@ -369,6 +366,16 @@ export function createWindLayer({
         infoTitle:
           'Surface wind at 10 m. Approximately 1° global grid. Curves follow the 10 m wind field, lifted 12 km for visibility; display height is not weather altitude. View lighting is for readability. Animation shows flow through one fixed forecast; it does not advance time. Color fields drape the globe basemap or the active photorealistic 3D Tiles.',
       };
+      controls.summary.reading = reading;
+      const settingsChips = controls.chips.filter(
+        ({ id }) => !id.startsWith('units-'),
+      );
+      settingsChips.splice(-1, 0, ...windUnitChips(units));
+      controls.summary.sections = [
+        { id: 'settings', label: 'Settings', chips: settingsChips },
+        ...(reading ? [windReadingSection(reading)] : []),
+      ];
+      return controls;
     },
 
     setRowControlsListener(listener) {
@@ -384,8 +391,6 @@ export function createWindLayer({
       rowControlsListener = null;
       inspectionMarker?.destroy();
       inspectionMarker = null;
-      presentation?.destroy();
-      presentation = null;
     },
     getStats() {
       const diagnostic = rendering?.getDiagnostics?.();

@@ -48,8 +48,27 @@ export function railFixture(onWrite = () => {}) {
           this.parent.children.splice(this.parent.children.indexOf(this), 1);
           this.parent = null;
         },
+        focus() {
+          document.activeElement = this;
+        },
+        matches(selector) {
+          if (selector.startsWith('.'))
+            return this.className?.split(' ').includes(selector.slice(1));
+          if (selector === '[data-chip-id]')
+            return Boolean(this.dataset.chipId);
+          return false;
+        },
+        closest(selector) {
+          return this.matches(selector) ? this : this.parent?.closest(selector);
+        },
         click() {
-          this.dispatchEvent(new Event('click'));
+          if (this.disabled) return;
+          const target = this;
+          for (let node = this; node; node = node.parent) {
+            const event = new Event('click');
+            Object.defineProperty(event, 'target', { value: target });
+            node.dispatchEvent(event);
+          }
         },
         querySelector(selector) {
           return find(
@@ -62,6 +81,21 @@ export function railFixture(onWrite = () => {}) {
           );
         },
       });
+      node.classList = {
+        contains: (name) => node.className?.split(' ').includes(name) || false,
+        toggle(name, enabled) {
+          const classes = new Set(
+            (node.className || '').split(' ').filter(Boolean),
+          );
+          if (enabled) classes.add(name);
+          else classes.delete(name);
+          const next = [...classes].join(' ');
+          if (next !== node.className) {
+            node.className = next;
+            onWrite('className');
+          }
+        },
+      };
       return tracked(node);
     },
   };

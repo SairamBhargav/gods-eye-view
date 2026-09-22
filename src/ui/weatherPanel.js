@@ -24,6 +24,8 @@ const age = (time) => {
     ? `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`
     : `${minutes}m ago`;
 };
+const historyTime = (time) =>
+  `${utc(time).slice(6)} · ${Math.max(0, Math.floor((Date.now() - Date.parse(time)) / 60_000))} min ago`;
 const dated = (time) => `${utc(time)} · ${age(time)}`;
 const set = (node, key, value) => {
   if (node[key] !== value) node[key] = value;
@@ -33,7 +35,7 @@ const set = (node, key, value) => {
 export function createWeatherPanel({
   container,
   clock,
-  onOpen = () => {},
+  setLayerParams = () => {},
   onAction = () => {},
 } = {}) {
   const document = container?.ownerDocument;
@@ -59,7 +61,7 @@ export function createWeatherPanel({
     document,
     sliderClassName: 'weather-timeline',
     onCommit: (tick) => clock?.setTarget(tick),
-    onPreview: dated,
+    onPreview: historyTime,
     onStep: (direction) => clock?.step(direction),
     onLatest: () => clock?.latest(),
     onPlay: () => clock?.togglePlay(),
@@ -69,6 +71,7 @@ export function createWeatherPanel({
     document,
     cardClassName: 'weather-card',
     badgeClassName: 'weather-coverage',
+    onParams: (id, params) => setLayerParams(id, params, { origin: 'user' }),
   });
   const render = () => {
     if (destroyed) return;
@@ -100,8 +103,8 @@ export function createWeatherPanel({
       disabled: !showTimeline,
       readout:
         state.mode === 'latest'
-          ? 'Latest · newest frame per product'
-          : dated(state.target),
+          ? 'LATEST · newest per product'
+          : historyTime(state.target),
     });
     cards.update(
       active.map(({ id, summary, legend = [] }) => {
@@ -129,16 +132,7 @@ export function createWeatherPanel({
           { id: 'status', text: summary.status },
         ];
         for (const line of summary.lines || []) lines.push(line);
-        const actions = [
-          {
-            id: 'controls',
-            label: 'Controls',
-            title: 'Open weather controls',
-            placement: 'header',
-            dataset: { weatherOpen: id },
-            onClick: () => onOpen(id),
-          },
-        ];
+        const actions = [];
         if (summary.advisoryUrl)
           actions.push({
             id: 'advisory',
@@ -159,6 +153,7 @@ export function createWeatherPanel({
             units: id === 'weather-cyclones' ? '' : summary.units,
             zeroIndex: legend.findIndex(({ label }) => label === '0'),
           },
+          sections: summary.sections,
           actions,
         };
       }),

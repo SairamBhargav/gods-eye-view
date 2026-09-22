@@ -3,14 +3,22 @@
 Wind appears in the Weather group before Utilities. The surface-weather prototype
 uses keyless NOAA GFS or ECMWF IFS forecasts on an approximately 1° display grid.
 It defaults to 10 m wind trails over the existing basemap. Speed shading is an explicit choice; earlier v2 links retain their original speed-shading meaning.
-The same row selects No color field, Speed, Pressure or Temperature, switches wind units between
-km/h, m/s and mph, pauses motion, and opens **Inspect center**. That dismissible
-reading reports the sampled map-center coordinates, interpolated wind speed and
-meteorological direction, selected scalar, model, valid time and freshness; it
-clears when the model/field changes or a refresh begins. The WEATHER card shows issue and valid times. Units appear on the left only
-with a speed legend; the inspection card always offers km/h, m/s and mph.
-Changing units reformats the captured reading and preserves its marker. Animation moves through a fixed forecast; it does not
-advance forecast time.
+Weather rows contain only the toggle and source/meta line. Configuration lives
+in each WEATHER card's Settings section: model, No color field, Speed, Pressure,
+Temperature, wind units, Pause/Resume and **Inspect center** for wind; coverage,
+image treatment and opacity controls for observed products. Cyclone cards carry
+a Storms section whose entries select and fly to the advisory, plus the official
+advisory link. Settings and Storms default closed; disclosure choices last for
+the page session.
+
+Inspect center adds an open Reading section to the wind card with captured
+coordinates, interpolated wind speed and meteorological direction, selected
+scalar, model, valid time and freshness. Clear reading removes the sample and
+map marker. Model/field changes or refresh also clear them. Unit chips reformat
+the captured sample without resampling or moving its marker. There is no separate
+floating reading surface. The card shows forecast issue and valid times; the
+observed-history timeline labels the oldest and newest available ticks. Animation
+moves through a fixed forecast; it does not advance forecast time.
 
 Temperature is air temperature at 2 m in °C; pressure is mean sea-level pressure
 in hPa. Optional companion fields come from the same model run/forecast as the

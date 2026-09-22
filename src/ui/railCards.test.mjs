@@ -145,3 +145,132 @@ test('CSSOM color and percentage normalization does not trigger repeated legend 
   assert.equal(writes, 0);
   view.destroy();
 });
+
+test('sections retain focused chips, dispatch current params and reconcile active storm items', () => {
+  let writes = 0;
+  const f = railFixture(() => writes++);
+  const calls = [];
+  const view = createRailCards({
+    ...f,
+    onParams: (...args) => calls.push(args),
+  });
+  const settings = {
+    id: 'settings',
+    label: 'Settings',
+    chips: [{ id: 'motion', label: 'Pause', params: { paused: true } }],
+  };
+  const storms = {
+    id: 'storms',
+    label: 'Storms',
+    list: {
+      ariaLabel: 'Storms',
+      items: [
+        {
+          id: 'a',
+          lead: 'AL',
+          text: 'Storm A',
+          active: true,
+          params: { stormId: 'a', focus: true },
+        },
+        { id: 'b', text: 'Storm B', params: { stormId: 'b', focus: true } },
+      ],
+    },
+  };
+  const reading = {
+    id: 'reading',
+    label: 'Reading',
+    lines: [{ id: 'coordinates', text: '<b>41°N</b>' }],
+    actions: [
+      { id: 'clear', label: 'Clear reading', params: { inspect: false } },
+    ],
+  };
+  let model = { ...card, sections: [settings, storms, reading] };
+  view.update([model]);
+  const section = (id) => f.find((n) => n.dataset.sectionId === id);
+  assert.equal(section('settings').children[1].hidden, true);
+  assert.equal(section('storms').children[1].hidden, true);
+  assert.equal(section('reading').children[1].hidden, false);
+  section('settings').children[0].click();
+  const chip = f.find((n) => n.dataset.chipId === 'motion');
+  chip.focus();
+  model = {
+    ...model,
+    sections: [
+      {
+        ...settings,
+        chips: [
+          {
+            id: 'motion',
+            label: 'Resume',
+            params: { paused: false },
+            active: true,
+          },
+        ],
+      },
+      {
+        ...storms,
+        list: {
+          ...storms.list,
+          items: storms.list.items.map((item) => ({
+            ...item,
+            active: item.id === 'b',
+          })),
+        },
+      },
+      reading,
+    ],
+  };
+  view.update([model]);
+  assert.equal(f.document.activeElement, chip);
+  chip.click();
+  assert.deepEqual(calls.at(-1), ['a', { paused: false }]);
+  const stormB = f.find(
+    (n) => n.tagName === 'BUTTON' && n.dataset.listItemId === 'b',
+  );
+  assert.equal(stormB.getAttribute('aria-pressed'), 'true');
+  stormB.click();
+  assert.deepEqual(calls.at(-1), ['a', { stormId: 'b', focus: true }]);
+  const clear = f.find((n) => n.dataset.actionId === 'clear');
+  clear.click();
+  assert.deepEqual(calls.at(-1), ['a', { inspect: false }]);
+  assert.equal(
+    f.find((n) => n.dataset.lineId === 'coordinates').children.length,
+    0,
+  );
+  writes = 0;
+  view.update([model]);
+  assert.equal(writes, 0);
+  view.destroy();
+  const before = calls.length;
+  chip.click();
+  clear.click();
+  stormB.click();
+  assert.equal(calls.length, before);
+});
+
+test('disclosure choices persist across removal, re-enable and remount for the page', () => {
+  const f = railFixture();
+  const model = {
+    ...card,
+    sections: [
+      { id: 'settings', label: 'Settings', chips: [] },
+      { id: 'reading', label: 'Reading', lines: [] },
+    ],
+  };
+  let view = createRailCards(f);
+  const toggle = (id) => f.find((n) => n.dataset.sectionId === id).children[0];
+  view.update([model]);
+  toggle('settings').click();
+  toggle('reading').click();
+  view.update([]);
+  view.update([model]);
+  assert.equal(toggle('settings').getAttribute('aria-expanded'), 'true');
+  assert.equal(toggle('reading').getAttribute('aria-expanded'), 'false');
+  assert.ok(toggle('reading').getAttribute('aria-controls'));
+  view.destroy();
+  view = createRailCards(f);
+  view.update([model]);
+  assert.equal(toggle('settings').getAttribute('aria-expanded'), 'true');
+  assert.equal(toggle('reading').getAttribute('aria-expanded'), 'false');
+  view.destroy();
+});

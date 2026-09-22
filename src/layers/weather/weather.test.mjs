@@ -1732,6 +1732,9 @@ test('observed descriptors keep configuration only and label satellite clouds by
     const controls = h.layer.getRowControls();
     assert.equal(controls.readout, true);
     assert.equal(controls.summary.coverage, coverage);
+    assert.deepEqual(controls.summary.sections, [
+      { id: 'settings', label: 'Settings', chips: controls.chips },
+    ]);
     assert.equal(
       controls.chips.some(({ id }) =>
         ['previous', 'play', 'next', 'latest'].includes(id),

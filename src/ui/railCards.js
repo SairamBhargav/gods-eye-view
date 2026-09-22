@@ -1,3 +1,5 @@
+import { createRailSections } from './railSections.js';
+
 const set = (node, key, value) => {
   if (node[key] !== value) node[key] = value;
 };
@@ -9,6 +11,7 @@ export function createRailCards({
   document = container?.ownerDocument,
   cardClassName = '',
   badgeClassName = '',
+  onParams = () => {},
 } = {}) {
   if (!document?.createElement || !container) return null;
   const rows = new Map();
@@ -28,6 +31,7 @@ export function createRailCards({
   const dispose = (row) => {
     for (const action of row.actions.values())
       action.node.removeEventListener('click', action.click);
+    row.sections.destroy();
     row.element.remove();
   };
   return {
@@ -56,6 +60,13 @@ export function createRailCards({
           const zero = make('span', 'rail-card-zero', ramp);
           zero.setAttribute('aria-hidden', 'true');
           const scale = make('div', 'rail-card-scale', element);
+          const sectionsHost = make('div', 'rail-card-sections', element);
+          const sections = createRailSections({
+            container: sectionsHost,
+            cardId: card.id,
+            stateKey: cardClassName,
+            onParams,
+          });
           const footer = make('footer', 'rail-card-actions', element);
           row = {
             element,
@@ -67,6 +78,7 @@ export function createRailCards({
             zero,
             scale,
             footer,
+            sections,
             lines: new Map(),
             actions: new Map(),
           };
@@ -132,6 +144,7 @@ export function createRailCards({
             ? `${legend.labels[0]} — ${legend.labels.at(-1)} ${legend.units || ''}`.trim()
             : '',
         );
+        row.sections.update(card.sections);
         const actionIds = new Set();
         for (const props of card.actions || []) {
           actionIds.add(props.id);

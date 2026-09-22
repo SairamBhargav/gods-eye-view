@@ -182,26 +182,6 @@ test('re-enable and an appearance change cannot reuse a released renderer field'
   assert.equal(layer.getStats().loading, false);
   layer.destroy();
 });
-test('non-DOM renderer test containers do not construct a DOM presentation', () => {
-  let presentations = 0;
-  const rendering = Object.fromEntries(
-    ['attach', 'start', 'stop', 'clear', 'destroy'].map((name) => [
-      name,
-      () => {},
-    ]),
-  );
-  const layer = createWindLayer({
-    feed: { getSnapshot: async () => complete('gfs') },
-    createRendering: () => rendering,
-    createPresentation: () => {
-      presentations++;
-      throw new Error('not a DOM');
-    },
-  });
-  layer.init({ container: { appendChild() {} } });
-  assert.equal(presentations, 0);
-  layer.destroy();
-});
 test('missing optional scalar retains valid wind and labels the field unavailable', async () => {
   const { layer } = harness({
     getSnapshot: async () =>
@@ -261,35 +241,6 @@ test('an imagery failure appears in status and cannot retain a misleading field 
   assert.deepEqual(layer.getRowControls().legend, []);
   layer.destroy();
 });
-test('changing row units reformats the inspection without hiding it', () => {
-  let hidden = 0;
-  const formatted = [];
-  const rendering = Object.fromEntries(
-    ['attach', 'start', 'stop', 'clear', 'destroy'].map((name) => [
-      name,
-      () => {},
-    ]),
-  );
-  const layer = createWindLayer({
-    feed: { getSnapshot: async () => complete('gfs') },
-    createRendering: () => rendering,
-    createPresentation: () => ({
-      setUnits(value) { formatted.push(value); },
-      hide() {
-        hidden++;
-      },
-      destroy() {},
-    }),
-  });
-  layer.init({
-    container: { appendChild() {}, ownerDocument: { createElement() {} } },
-  });
-  layer.setParams({ units: 'mph' });
-  assert.equal(hidden, 0);
-  assert.deepEqual(formatted, ['mph']);
-  layer.destroy();
-});
-
 test('renderer readiness pushes fresh loading stats and controls to the displayed row', async () => {
   let ready = false;
   let statusChanged;
@@ -353,8 +304,7 @@ test('weather summary describes the selected forecast and count remains numeric'
 test('inspection marker clears with dismissal, changed fields/models and disable', async () => {
   const nodes = [];
   let listener;
-  let dismiss;
-  let reading;
+  let samples = 0;
   const container = {
     ownerDocument: { createElement: () => ({ style: {}, setAttribute() {}, remove() { nodes.splice(nodes.indexOf(this), 1); } }) },
     appendChild(node) { nodes.push(node); },
@@ -362,7 +312,7 @@ test('inspection marker clears with dismissal, changed fields/models and disable
   };
   const viewer = {
     container,
-    camera: { positionWC: {}, pickEllipsoid: () => ({ longitude: 0, latitude: 0 }) },
+    camera: { positionWC: {}, pickEllipsoid: () => { samples++; return { longitude: 0, latitude: 0 }; } },
     scene: {
       mode: 3,
       canvas: { clientWidth: 800, clientHeight: 600, getBoundingClientRect: () => ({ left: 0, top: 0 }) },
@@ -380,26 +330,33 @@ test('inspection marker clears with dismissal, changed fields/models and disable
       EllipsoidalOccluder: class { isPointVisible() { return true; } },
     },
     createRendering: () => rendering,
-    createPresentation(options) {
-      dismiss = options.onClose;
-      return { show(value) { reading = value; }, hide() {}, destroy() {} };
-    },
+
   });
   layer.init(viewer);
   layer.enable();
   await layer.update();
   layer.setParams({ inspect: true });
+  const captured = layer.getRowControls().summary.reading;
+  assert.equal(samples, 1);
   const retained = nodes[0];
   layer.setParams({ units: 'mph' });
   assert.equal(nodes[0], retained);
+  const changed = layer.getRowControls().summary.reading;
+  assert.equal(changed.speed, captured.speed);
+  assert.equal(changed.coordinates, captured.coordinates);
+  assert.match(changed.wind, /mph/);
+  assert.equal(samples, 1, 'units do not resample');
+  assert.equal(layer.getRowControls().summary.sections.at(-1).id, 'reading');
   assert.equal(nodes.length, 1);
   assert.equal(typeof listener, 'function');
-  for (const change of [() => dismiss(), () => layer.setParams({ overlay: 'speed' }), () => layer.setParams({ model: 'ifs' }), () => layer.disable()]) {
+  for (const change of [() => layer.setParams({ inspect: false }), () => layer.setParams({ overlay: 'speed' }), () => layer.setParams({ model: 'ifs' }), () => layer.disable()]) {
     layer.setParams({ inspect: true });
     assert.equal(nodes.length, 1);
-    assert.equal(reading.coordinates, '0.00°N · 0.00°E');
+    assert.equal(layer.getRowControls().summary.reading.coordinates, '0.00°N · 0.00°E');
     change();
     assert.equal(nodes.length, 0);
+    assert.equal(layer.getRowControls().summary.reading, null);
+    assert.equal(layer.getRowControls().summary.sections.some(({ id }) => id === 'reading'), false);
     assert.equal(listener, null);
     await Promise.resolve();
     await Promise.resolve();

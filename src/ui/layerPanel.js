@@ -1,3 +1,5 @@
+import { syncChipGroup } from './chipGroup.js';
+import { syncRowList } from './rowList.js';
 import { layerFeedState } from '../data/feedState.js';
 export { layerFeedState } from '../data/feedState.js';
 import { GUIDANCE_STATUSES } from '../loadingFeedback.js';
@@ -134,17 +136,7 @@ export class LayerPanel {
       clock: this.weatherClock,
       container:
         container?.ownerDocument?.getElementById?.('weather-panel-body'),
-      onOpen: (id) => {
-        const panel = container.closest?.('#data-panel');
-        if (panel?.classList.contains('collapsed'))
-          panel.querySelector('[data-collapse-target="data-panel"]')?.click();
-        const row = container.querySelector(`[data-layer-id="${id}"]`);
-        row?.scrollIntoView?.({ block: 'nearest' });
-        const target =
-          row?.querySelector('.data-toggle-chip:not(:disabled)') ||
-          row?.querySelector('.data-toggle-btn');
-        target?.focus({ preventScroll: true });
-      },
+      setLayerParams: this.setLayerParams,
     });
     this._renderToggles();
   }
@@ -245,7 +237,8 @@ export class LayerPanel {
         }
       });
 
-      right.appendChild(count);
+      const readout = Boolean(this._rowControlsFor(layer.id)?.readout);
+      if (!readout) right.appendChild(count);
       right.appendChild(toggle);
       topRow.appendChild(left);
       topRow.appendChild(right);
@@ -268,39 +261,41 @@ export class LayerPanel {
           this._scheduleRowControlsRefresh(),
         );
         if (unsubscribe) this._removers.push(unsubscribe);
-        const controls = document.createElement('div');
-        controls.className = 'data-toggle-controls';
-        this._bind(controls, 'click', (event) => {
-          const button = event.target?.closest?.('.data-toggle-chip');
-          if (!button || button.disabled) return;
-          // Re-read the live descriptor rather than trusting the rendered
-          // chip, so a stale row can never apply an inverted toggle.
-          const chip = this._rowControlsFor(layer.id)?.chips?.find(
-            (entry) => entry.id === button.dataset.chipId,
-          );
-          if (!chip || chip.disabled || !this.isEnabled(layer.id)) return;
-          if (typeof chip.onClick === 'function') chip.onClick();
-          else if (chip.params)
-            this.setLayerParams(layer.id, chip.params, { origin: 'user' });
-        });
-        row.appendChild(controls);
-        // An ordered list below the chips, for a layer whose row carries a
-        // sequence (turn-by-turn directions). Its own delegated listener, its
-        // own container — the chip row stays a chip row.
-        const list = document.createElement('ol');
-        list.className = 'data-row-list';
-        list.hidden = true;
-        this._bind(list, 'click', (event) => {
-          const button = event.target?.closest?.('.data-row-list-item');
-          if (!button || button.disabled) return;
-          const item = this._rowControlsFor(layer.id)?.list?.items?.find(
-            (entry) => entry.id === button.dataset.listItemId,
-          );
-          if (item?.params)
-            this.setLayerParams(layer.id, item.params, { origin: 'user' });
-        });
-        row.appendChild(list);
-        this._syncRowControls(controls, layer, list);
+        if (!readout) {
+          const controls = document.createElement('div');
+          controls.className = 'data-toggle-controls';
+          this._bind(controls, 'click', (event) => {
+            const button = event.target?.closest?.('.data-toggle-chip');
+            if (!button || button.disabled) return;
+            // Re-read the live descriptor rather than trusting the rendered
+            // chip, so a stale row can never apply an inverted toggle.
+            const chip = this._rowControlsFor(layer.id)?.chips?.find(
+              (entry) => entry.id === button.dataset.chipId,
+            );
+            if (!chip || chip.disabled || !this.isEnabled(layer.id)) return;
+            if (typeof chip.onClick === 'function') chip.onClick();
+            else if (chip.params)
+              this.setLayerParams(layer.id, chip.params, { origin: 'user' });
+          });
+          row.appendChild(controls);
+          // An ordered list below the chips, for a layer whose row carries a
+          // sequence (turn-by-turn directions). Its own delegated listener, its
+          // own container — the chip row stays a chip row.
+          const list = document.createElement('ol');
+          list.className = 'data-row-list';
+          list.hidden = true;
+          this._bind(list, 'click', (event) => {
+            const button = event.target?.closest?.('.data-row-list-item');
+            if (!button || button.disabled) return;
+            const item = this._rowControlsFor(layer.id)?.list?.items?.find(
+              (entry) => entry.id === button.dataset.listItemId,
+            );
+            if (item?.params)
+              this.setLayerParams(layer.id, item.params, { origin: 'user' });
+          });
+          row.appendChild(list);
+          this._syncRowControls(controls, layer, list);
+        }
       }
 
       this._toggleContainer.appendChild(row);
@@ -373,44 +368,21 @@ export class LayerPanel {
   _syncRowControls(container, layer, listContainer = null) {
     if (!container) return;
     const controls = layer.enabled ? this._rowControlsFor(layer.id) : null;
+    if (controls?.readout) {
+      container.remove();
+      listContainer?.remove();
+      return;
+    }
     const chips = controls?.chips || [];
-    const legend = controls?.readout ? [] : controls?.legend || [];
-    const infoText = controls?.readout
-      ? controls.summary?.status
-      : controls?.info;
+    const legend = controls?.legend || [];
+    const infoText = controls?.info;
     this._syncRowList(listContainer, controls?.list || null);
-    container.hidden =
-      chips.length === 0 &&
-      legend.length === 0 &&
-      !infoText &&
-      !controls?.readout;
+    container.hidden = chips.length === 0 && legend.length === 0 && !infoText;
 
     const info = container._rowControlsInfo || null;
     const firstLegend = container.querySelector('.data-toggle-legend-item');
 
-    const stale = new Map();
-    for (const node of [...container.children]) {
-      if (node.dataset?.chipId) stale.set(node.dataset.chipId, node);
-    }
-
-    for (const chip of chips) {
-      let button = stale.get(chip.id);
-      stale.delete(chip.id);
-      if (!button) {
-        button = document.createElement('button');
-        button.type = 'button';
-        button.dataset.chipId = chip.id;
-        container.insertBefore(button, firstLegend || info);
-      }
-      const state = chip.state || (chip.active ? 'active' : 'idle');
-      button.className = `data-toggle-chip chip-${state}${chip.active ? ' active' : ''}`;
-      if (button.textContent !== chip.label) button.textContent = chip.label;
-      button.title = chip.title || '';
-      button.disabled = Boolean(chip.disabled);
-      button.setAttribute('aria-pressed', chip.active ? 'true' : 'false');
-      button.setAttribute('aria-busy', chip.busy ? 'true' : 'false');
-    }
-    for (const node of stale.values()) node.remove();
+    syncChipGroup(container, chips, { before: firstLegend || info });
 
     const legendSignature = JSON.stringify(
       legend.map(({ label, color, count, blurb }) => [
@@ -441,21 +413,19 @@ export class LayerPanel {
       }
       container._legendSignature = legendSignature;
     }
-    if (infoText || controls?.readout || info) {
+    if (infoText || info) {
       const node = info || document.createElement('div');
       if (!info) {
         container.appendChild(node);
         container._rowControlsInfo = node;
       }
-      const className = controls?.readout
-        ? 'data-toggle-controls-status'
-        : 'data-toggle-controls-info';
+      const className = 'data-toggle-controls-info';
       if (node.className !== className) node.className = className;
       const text = infoText ? String(infoText) : '';
       const title = controls?.infoTitle || '';
       if (node.textContent !== text) node.textContent = text;
       if (node.title !== title) node.title = title;
-      const hidden = !controls?.readout && !text;
+      const hidden = !text;
       if (node.hidden !== hidden) node.hidden = hidden;
     }
   }
@@ -473,69 +443,7 @@ export class LayerPanel {
    * @param {{ariaLabel?: string, items?: Array<object>}|null} list Descriptor.
    */
   _syncRowList(container, list) {
-    if (!container) return;
-    const items = list?.items || [];
-    container.hidden = items.length === 0;
-    if (list?.ariaLabel) container.setAttribute('aria-label', list.ariaLabel);
-
-    const stale = new Map();
-    for (const node of [...container.children]) {
-      if (node.dataset?.listItemId) stale.set(node.dataset.listItemId, node);
-    }
-    let previous = null;
-    let activeButton = null;
-    for (const item of items) {
-      let entry = stale.get(item.id);
-      stale.delete(item.id);
-      let button;
-      if (!entry) {
-        entry = document.createElement('li');
-        entry.dataset.listItemId = item.id;
-        button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'data-row-list-item';
-        button.dataset.listItemId = item.id;
-        const lead = document.createElement('span');
-        lead.className = 'data-row-list-lead';
-        const text = document.createElement('span');
-        text.className = 'data-row-list-text';
-        button.append(lead, text);
-        entry.appendChild(button);
-      } else {
-        button = entry.querySelector('.data-row-list-item');
-      }
-      // Keep DOM order in step with descriptor order without rebuilding.
-      const anchor = previous ? previous.nextSibling : container.firstChild;
-      if (entry !== anchor) container.insertBefore(entry, anchor);
-      previous = entry;
-      if (!button) continue;
-      const lead = button.querySelector('.data-row-list-lead');
-      const text = button.querySelector('.data-row-list-text');
-      const leadText = String(item.lead ?? '');
-      const bodyText = String(item.text ?? '');
-      if (lead && lead.textContent !== leadText) lead.textContent = leadText;
-      if (text && text.textContent !== bodyText) text.textContent = bodyText;
-      button.disabled = Boolean(item.disabled);
-      button.classList.toggle('note', Boolean(item.disabled));
-      button.classList.toggle('active', Boolean(item.active));
-      button.classList.toggle('current', Boolean(item.current));
-      button.setAttribute('aria-current', item.current ? 'step' : 'false');
-      button.setAttribute('aria-pressed', item.active ? 'true' : 'false');
-      button.title = bodyText;
-      if (item.current) activeButton = button;
-    }
-    for (const node of stale.values()) node.remove();
-    // Follow the flight, but never steal a scroll the reader is making
-    // themselves: only when the step actually changed.
-    if (
-      activeButton &&
-      container.dataset.currentId !== activeButton.dataset.listItemId
-    ) {
-      container.dataset.currentId = activeButton.dataset.listItemId;
-      activeButton.scrollIntoView?.({ block: 'nearest' });
-    } else if (!activeButton) {
-      delete container.dataset.currentId;
-    }
+    syncRowList(container, list);
   }
 
   _refreshTogglePanel() {

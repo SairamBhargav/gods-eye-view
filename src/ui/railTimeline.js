@@ -49,7 +49,18 @@ export function createRailTimeline({
   const readout = document.createElement('span');
   readout.className = 'rail-timeline-readout';
   controls.appendChild(readout);
+  const label = document.createElement('div');
+  label.className = 'panel-title';
+  label.textContent = 'Observed history';
+  const endpoints = document.createElement('div');
+  endpoints.className = 'rail-timeline-endpoints';
+  const oldest = document.createElement('span');
+  const newest = document.createElement('span');
+  endpoints.appendChild(oldest);
+  endpoints.appendChild(newest);
+  root.appendChild(label);
   root.appendChild(row);
+  root.appendChild(endpoints);
   root.appendChild(controls);
   container.appendChild(root);
   let props = {
@@ -98,6 +109,8 @@ export function createRailTimeline({
         String(Math.max(0, Math.min(props.index, ticks.length - 1))),
       );
       valueText(ticks[Number(slider.value)]);
+      set(oldest, 'textContent', utc(ticks[0]).slice(6));
+      set(newest, 'textContent', utc(ticks.at(-1)).slice(6));
       set(readout, 'textContent', props.readout || '');
     }
     for (const node of [slider, latest, play])
