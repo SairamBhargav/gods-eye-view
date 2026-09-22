@@ -77,6 +77,9 @@ function harness({ deferred = false } = {}) {
     LabelStyle: { FILL_AND_OUTLINE: 1 },
     HorizontalOrigin: { LEFT: 1 },
     ArcType: { GEODESIC: 1 },
+    HeightReference: Cesium.HeightReference,
+    ClassificationType: Cesium.ClassificationType,
+    DistanceDisplayCondition: Cesium.DistanceDisplayCondition,
     CustomDataSource: class {
       constructor() {
         const values = [];
@@ -344,6 +347,21 @@ test('real Cesium culls far storms and retains partially visible extents with ei
     });
     viewer.scene.preRender.raiseEvent();
     const entities = sources[0].entities.values;
+    for (const entity of entities.filter((e) => e.position)) {
+      for (const graphic of [entity.point, entity.label]) {
+        assert.equal(
+          graphic.heightReference.getValue(),
+          Cesium.HeightReference.CLAMP_TO_GROUND,
+        );
+        assert.equal(graphic.disableDepthTestDistance.getValue(), Infinity);
+      }
+      if (entity.id.includes(':forecast:')) {
+        assert.equal(
+          entity.label.distanceDisplayCondition.getValue().far,
+          4_000_000,
+        );
+      }
+    }
     assert.ok(
       entities
         .filter((e) => e.id.startsWith('cyclone:near:'))
@@ -366,7 +384,7 @@ test('picking accepts exact current owned entities, never prefixes or superseded
   const h = harness();
   await h.rendering.setSnapshot({ storms: [storm()] });
   const oldEntities = [...h.sources[0].entities.values];
-  assert.equal(oldEntities.length, 5);
+  assert.equal(oldEntities.length, 8);
   for (const entity of oldEntities) {
     assert.equal(h.rendering.pickStorm({ id: entity }), 'ep152026', entity.id);
     assert.equal(h.rendering.ownsPickId(entity.id), true);
@@ -421,6 +439,32 @@ test('static entities preserve polygon parts, holes and geographic seam coordina
   assert.equal(cones.length, 2);
   assert.equal(cones[0].polygon.hierarchy.holes.length, 1);
   assert.equal(cones[0].polygon.hierarchy.positions[1].lon, -178);
+  for (const cone of cones) {
+    assert.equal(
+      cone.polygon.classificationType,
+      h.cesium.ClassificationType.BOTH,
+    );
+    assert.equal(cone.polygon.height, undefined);
+    assert.equal(cone.polygon.extrudedHeight, undefined);
+    assert.equal(cone.polygon.outline, undefined);
+  }
+  const outlines = entities.filter((e) => e.id.includes(':outline:'));
+  assert.equal(outlines.length, 3);
+  assert.deepEqual(
+    outlines.map((e) => e.polyline.positions.map((p) => [p.lon, p.lat])),
+    storm().cone.coordinates.flat(),
+  );
+  for (const outline of outlines) {
+    assert.deepEqual(outline.polyline.material, {
+      value: '#7fe6ed',
+      alpha: 0.55,
+    });
+  }
+  for (const { polyline } of entities.filter((e) => e.polyline)) {
+    assert.equal(polyline.clampToGround, true);
+    assert.equal(polyline.classificationType, h.cesium.ClassificationType.BOTH);
+    assert.ok(polyline.positions.every((p) => p.height === 0));
+  }
   assert.equal(
     entities.find((e) => e.polyline).polyline.positions[1].lon,
     -179,
@@ -431,7 +475,7 @@ test('static entities preserve polygon parts, holes and geographic seam coordina
     cones: 2,
     forecastPoints: 1,
     dataSources: 1,
-    entities: 5,
+    entities: 8,
     selectedId: null,
     timerActive: false,
   });

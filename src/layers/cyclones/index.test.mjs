@@ -139,6 +139,9 @@ test('map selection yields to pointer owners and owns only its enabled handler',
   picked = { id: foreignEntity };
   handlers[0].click(click);
   assert.equal(layer.getDiagnostics().selectedId, 'ep152026');
+  picked = { primitive: {} };
+  handlers[0].click(click);
+  assert.equal(layer.getDiagnostics().selectionIntent, 'auto');
   picked = { id: pickedEntity };
   overlayHit = { sourceId: 'ais-live-vessels', entryId: 'vessel:123' };
   const beforeCard = picks;
@@ -191,6 +194,34 @@ test('map selection yields to pointer owners and owns only its enabled handler',
   assert.equal(layer.getRowControls().list.items[1].active, true);
   assert.ok(notices > before);
   assert.equal(viewer.trackedEntity, null);
+  picked = undefined;
+  overlayHit = { sourceId: 'ais-live-vessels' };
+  handlers[0].click(click);
+  assert.equal(layer.getDiagnostics().selectedId, 'ep162026');
+  overlayHit = null;
+  handlers[0].click(click);
+  assert.equal(layer.getDiagnostics().selectedId, null);
+  assert.equal(layer.getDiagnostics().selectionIntent, 'cleared');
+  picked = { id: pickedEntity };
+  handlers[0].click(click);
+  assert.equal(layer.getDiagnostics().selectedId, 'ep162026');
+  picked = { id: 'flight:abc', primitive: {} };
+  handlers[0].click(click);
+  assert.equal(
+    layer.getDiagnostics().selectedId,
+    'ep162026',
+    "another layer's pick leaves the selection alone",
+  );
+  picked = { content: {}, primitive: {} };
+  handlers[0].click(click);
+  assert.equal(
+    layer.getDiagnostics().selectedId,
+    null,
+    '3D Tiles surface content is empty map',
+  );
+  assert.equal(layer.getDiagnostics().selectionIntent, 'cleared');
+  await layer.update();
+  assert.equal(layer.getDiagnostics().selectedId, null);
   assert.equal(
     isPointerFree(),
     true,
@@ -295,6 +326,116 @@ function harness(
     },
   };
 }
+test('refresh preserves selection intent, including explicit clears and missing storms', async () => {
+  let next = snapshot([storm(), storm('ep162026')]);
+  const h = harness({ getSnapshot: async () => next });
+  h.layer.enable();
+  await h.layer.update();
+  assert.equal(h.selection, 'ep152026');
+  assert.equal(h.layer.getDiagnostics().selectionIntent, 'auto');
+  next = snapshot([storm('ep162026')]);
+  await h.layer.update();
+  assert.equal(h.selection, 'ep162026');
+  assert.equal(h.layer.getDiagnostics().selectionIntent, 'auto');
+  next = snapshot([storm(), storm('ep162026')]);
+  h.layer.setParams({ stormId: 'ep162026' });
+  h.layer.setParams({ stormId: 'ep162026' });
+  await h.layer.update();
+  assert.equal(h.selection, 'ep162026');
+  assert.equal(h.layer.getDiagnostics().selectionIntent, 'user');
+  assert.equal(h.navigation.length, 0);
+  next = snapshot([storm()]);
+  await h.layer.update();
+  assert.equal(h.selection, 'ep152026');
+  assert.equal(h.layer.getDiagnostics().selectionIntent, 'user');
+  for (const clear of [{ stormId: null }, { clear: true }]) {
+    h.layer.setParams({ stormId: 'ep152026' });
+    h.layer.setParams(clear);
+    assert.equal(h.selection, null);
+    assert.equal(h.layer.getDiagnostics().selectionIntent, 'cleared');
+    await h.layer.update();
+    assert.equal(h.selection, null);
+    assert.equal(h.layer.getRowControls().summary.detail, 'No storm selected');
+  }
+  h.layer.disable();
+  assert.equal(h.layer.getDiagnostics().selectionIntent, 'auto');
+  h.layer.enable();
+  await h.layer.update();
+  assert.equal(h.selection, 'ep152026');
+  h.layer.destroy();
+});
+
+test('clearing while a refreshed data source is staging cannot reselect a storm', async () => {
+  const staged = deferred();
+  const staging = deferred();
+  let calls = 0;
+  const layer = createCyclonesLayer({
+    feed: { getSnapshot: async () => snapshot() },
+    createRendering: () => ({
+      setSnapshot() {
+        if (++calls === 1) return true;
+        staging.resolve();
+        return staged.promise;
+      },
+      setSelection() {},
+      getDiagnostics: () => ({}),
+      clear() {},
+      destroy() {},
+    }),
+  });
+  layer.init({});
+  layer.enable();
+  await layer.update();
+  assert.equal(layer.getDiagnostics().selectedId, 'ep152026');
+  const pending = layer.update();
+  await staging.promise;
+  layer.setParams({ clear: true });
+  staged.resolve(true);
+  await pending;
+  assert.equal(layer.getDiagnostics().selectedId, null);
+  assert.equal(layer.getDiagnostics().selectionIntent, 'cleared');
+  layer.destroy();
+});
+
+test('queued focus is revoked by selection changes, clears, refresh fallback and teardown', async () => {
+  for (const change of ['select', 'clear', 'fallback', 'disable', 'destroy']) {
+    let next = snapshot([storm(), storm('ep162026')]);
+    const h = harness({ getSnapshot: async () => next });
+    const callbacks = [];
+    h.layer.attachShellServices({ runNavigation: (fn) => callbacks.push(fn) });
+    h.layer.enable();
+    await h.layer.update();
+    h.layer.setParams({ stormId: 'ep152026', focus: true });
+    if (change === 'select') {
+      h.layer.setParams({ stormId: 'ep162026' });
+      h.layer.setParams({ stormId: 'ep152026' });
+    } else if (change === 'clear') h.layer.setParams({ stormId: null });
+    else if (change === 'fallback') {
+      next = snapshot([storm('ep162026')]);
+      await h.layer.update();
+    } else h.layer[change]();
+    callbacks.shift()();
+    assert.equal(h.navigation.length, 0, change);
+    h.layer.destroy();
+  }
+});
+
+test('only the latest queued focus runs and an unchanged selection survives refresh', async () => {
+  const h = harness();
+  const callbacks = [];
+  h.layer.attachShellServices({ runNavigation: (fn) => callbacks.push(fn) });
+  h.layer.enable();
+  await h.layer.update();
+  h.layer.setParams({ stormId: 'ep152026', focus: true });
+  h.layer.setParams({ stormId: 'ep152026', focus: true });
+  await h.layer.update();
+  callbacks[0]();
+  assert.equal(h.navigation.length, 0);
+  callbacks[1]();
+  assert.equal(h.navigation.length, 1);
+  assert.equal(h.navigation[0].options.duration, 1.4);
+  h.layer.destroy();
+});
 test('classification display expands known codes without altering the source or guessing unknown meanings', async () => {
   for (const [code, label] of [
     ['PTC', 'Potential tropical cyclone'],
@@ -340,16 +481,23 @@ test('advisory selection uses accessible row descriptors and shared camera hando
   assert.equal(controls.summary.status, 'Track/cone awaiting advisory 10');
   assert.match(controls.info, /09-16 03:00 UTC/);
   assert.match(controls.infoTitle, /not storm size/);
+  assert.match(controls.infoTitle, /follows the surface/);
+  assert.equal(controls.list.items[1].params.focus, true);
+  assert.equal(
+    controls.chips.some((chip) => chip.id === 'focus'),
+    false,
+  );
   h.layer.setParams(controls.list.items[1].params);
   assert.equal(h.selection, 'ep162026');
-  h.layer.setParams({ focus: true });
   assert.equal(h.navigation[0], 'claimed');
   assert.equal(h.navigation[1].options.duration, 0);
+  h.layer.setParams(controls.list.items[1].params);
+  assert.equal(h.navigation.length, 4, 'selected row focuses again');
   h.layer.setParams({ advisory: true });
   assert.match(h.opened[0], /^https:\/\/www\.nhc\.noaa\.gov\/text\//);
   h.layer.disable();
   h.layer.setParams({ focus: true, advisory: true });
-  assert.equal(h.navigation.length, 2);
+  assert.equal(h.navigation.length, 4);
   assert.equal(h.opened.length, 1);
   assert.equal(h.layer.getStats().count, 0);
   assert.equal(h.layer.getDiagnostics().timerActive, false);

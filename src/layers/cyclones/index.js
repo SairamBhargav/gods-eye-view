@@ -45,6 +45,8 @@ export function createCyclonesLayer({
     request = null,
     listener = null,
     selectedId = null,
+    selectionIntent = 'auto',
+    navigationGeneration = 0,
     clickHandler = null,
     removeClickCapture = null;
   let enabled = false,
@@ -55,6 +57,19 @@ export function createCyclonesLayer({
   const notify = () => listener?.();
   const selected = () =>
     snapshot?.storms.find((storm) => storm.id === selectedId) || null;
+  function select(id) {
+    if (selectedId !== id) ++navigationGeneration;
+    selectedId = id;
+    rendering?.setSelection(id);
+  }
+  // Photorealistic 3D Tiles pick as tileset content without an entity id;
+  // that is empty map, the same as no pick at all on the globe.
+  const isSurfacePick = (picked) =>
+    !picked ||
+    (picked.id === undefined &&
+      (picked.content !== undefined ||
+        (typeof cesium.Cesium3DTileset === 'function' &&
+          picked.primitive instanceof cesium.Cesium3DTileset)));
   function installSelection() {
     if (
       clickHandler ||
@@ -123,8 +138,10 @@ export function createCyclonesLayer({
         ? nativeHit.sourceId
         : hitTestOverlay(click.position.x, click.position.y)?.sourceId;
       if (sourceId === VESSEL_OVERLAY_SOURCE_ID) return;
-      const id = rendering?.pickStorm(viewer.scene.pick(click.position));
-      if (id && id !== selectedId) layer.setParams({ stormId: id });
+      const picked = viewer.scene.pick(click.position);
+      const id = rendering?.pickStorm(picked);
+      if (id) layer.setParams({ stormId: id });
+      else if (isSurfacePick(picked)) layer.setParams({ clear: true });
     }, cesium.ScreenSpaceEventType.LEFT_CLICK);
   }
   function removeSelection() {
@@ -171,6 +188,8 @@ export function createCyclonesLayer({
       error = null;
       snapshot = null;
       selectedId = null;
+      selectionIntent = 'auto';
+      ++navigationGeneration;
       rendering?.clear();
     },
     async update(_viewer, { signal } = {}) {
@@ -193,6 +212,7 @@ export function createCyclonesLayer({
           rendering.clear();
           snapshot = next;
           selectedId = null;
+          ++navigationGeneration;
           error = next.reason || 'Cyclone advisories unavailable';
           return true;
         }
@@ -209,8 +229,12 @@ export function createCyclonesLayer({
         snapshot = next;
         error = null;
         if (!snapshot.storms.some((storm) => storm.id === selectedId))
-          selectedId = snapshot.storms[0]?.id || null;
-        rendering.setSelection(selectedId);
+          select(
+            selectionIntent === 'cleared'
+              ? null
+              : snapshot.storms[0]?.id || null,
+          );
+        else rendering.setSelection(selectedId);
         return true;
       } catch (cause) {
         if (controller.signal.aborted || request !== controller) return false;
@@ -219,6 +243,7 @@ export function createCyclonesLayer({
         rendering?.clear();
         snapshot = null;
         selectedId = null;
+        ++navigationGeneration;
         return true;
       } finally {
         signal?.removeEventListener('abort', abort);
@@ -230,27 +255,40 @@ export function createCyclonesLayer({
       }
     },
     setParams(params = {}) {
-      if (!enabled) return;
-      if (
+      if (!enabled || destroyed) return;
+      if (params.clear === true || params.stormId === null) {
+        selectionIntent = 'cleared';
+        select(null);
+        notify();
+      } else if (
         typeof params.stormId === 'string' &&
         snapshot?.storms.some((storm) => storm.id === params.stormId)
       ) {
-        selectedId = params.stormId;
-        rendering.setSelection(selectedId);
+        selectionIntent = 'user';
+        select(params.stormId);
         notify();
       }
       const storm = selected();
       if (params.focus === true && storm && runNavigation) {
         const sphere = rendering.getFocusSphere(storm.id);
-        if (sphere)
-          runNavigation(() =>
-            viewer.camera.flyToBoundingSphere(sphere, {
+        if (sphere) {
+          const generation = ++navigationGeneration;
+          runNavigation(() => {
+            if (
+              !enabled ||
+              destroyed ||
+              generation !== navigationGeneration ||
+              selectedId !== storm.id
+            )
+              return;
+            return viewer.camera.flyToBoundingSphere(sphere, {
               duration: matchMedia?.('(prefers-reduced-motion: reduce)')
                 ?.matches
                 ? 0
                 : 1.4,
-            }),
-          );
+            });
+          });
+        }
       }
       if (params.advisory === true && storm?.advisoryUrl)
         openLink(storm.advisoryUrl);
@@ -279,7 +317,9 @@ export function createCyclonesLayer({
         ? `${storm.name} · ${classificationName(storm.classification)} · Advisory ${storm.advisoryNumber} · ${utc(storm.issuedAt)}`
         : empty
           ? 'No active NHC/CPHC systems'
-          : 'Advisories unavailable';
+          : snapshot?.storms.length
+            ? 'No storm selected'
+            : 'Advisories unavailable';
       return {
         summary: {
           label: 'Cyclones · NHC / CPHC',
@@ -295,16 +335,10 @@ export function createCyclonesLayer({
             lead: item.basin,
             text: `${item.name} · ${classificationName(item.classification)} · ${item.windKt === null ? 'Wind unavailable' : `${item.windKt} kt`}`,
             active: item.id === selectedId,
-            params: { stormId: item.id },
+            params: { stormId: item.id, focus: true },
           })),
         },
         chips: [
-          {
-            id: 'focus',
-            label: 'View storm',
-            disabled: !storm || !runNavigation,
-            params: { focus: true },
-          },
           {
             id: 'advisory',
             label: 'Official advisory ↗',
@@ -323,7 +357,7 @@ export function createCyclonesLayer({
           ? `${detail}\nPosition as of ${utc(storm.positionAt)}\nMaximum sustained wind: ${number(storm.windKt, 'kt')} · Pressure: ${number(storm.pressureHpa, 'hPa')}\n${geometry}${status && status !== geometry ? '\n' + status : ''}\n${snapshot.coverage}`
           : `${detail}${status ? '\n' + status : ''}\n${snapshot?.coverage || COVERAGE}`,
         infoTitle:
-          'Select a storm on the map or in the list, then choose View storm to move the camera. NOAA NHC/CPHC advisory context. The cone describes forecast center-track uncertainty, not storm size or the full hazard area. Forecast point labels are source lead hours, not times computed from advisory issuance. Geometry is displayed 2–3 km above the ellipsoid for visibility; height is not weather altitude. Consult the official advisory.',
+          'Select a storm on the map, or choose a storm in the list to select it and move the camera. Click empty map space to clear the selection. NOAA NHC/CPHC advisory context. The cone describes forecast center-track uncertainty, not storm size or the full hazard area. Forecast point labels are source lead hours, not times computed from advisory issuance. Geometry follows the surface; height is not weather altitude. Consult the official advisory.',
       };
     },
     setRowControlsListener(value) {
@@ -354,6 +388,7 @@ export function createCyclonesLayer({
         requestPending: !!request,
         selectionActive: clickHandler !== null,
         selectedId,
+        selectionIntent,
         timerActive: false,
       };
     },

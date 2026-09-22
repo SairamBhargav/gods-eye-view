@@ -104,7 +104,7 @@ export function createCycloneRendering({ viewer, cesium: C }) {
       const nextCounts = { storms: 0, tracks: 0, cones: 0, forecastPoints: 0 };
       const nextHorizonStorms = [];
       const position = ({ longitude, latitude }) =>
-        C.Cartesian3.fromDegrees(longitude, latitude, 3000);
+        C.Cartesian3.fromDegrees(longitude, latitude, 0);
       const coordinate = (pair) =>
         position({ longitude: pair[0], latitude: pair[1] });
       try {
@@ -126,12 +126,16 @@ export function createCycloneRendering({ viewer, cesium: C }) {
             name: storm.name,
             position: center,
             point: {
+              heightReference: C.HeightReference.CLAMP_TO_GROUND,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
               pixelSize: 9,
               color: blue,
               outlineColor: C.Color.BLACK,
               outlineWidth: 2,
             },
             label: {
+              heightReference: C.HeightReference.CLAMP_TO_GROUND,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
               text: storm.name,
               font: '13px sans-serif',
               fillColor: white,
@@ -157,6 +161,8 @@ export function createCycloneRendering({ viewer, cesium: C }) {
               addEntity({
                 id: `cyclone:${storm.id}:track:${index}`,
                 polyline: {
+                  clampToGround: true,
+                  classificationType: C.ClassificationType.BOTH,
                   positions,
                   width: 2.5,
                   material: blue,
@@ -181,13 +187,26 @@ export function createCycloneRendering({ viewer, cesium: C }) {
                 id: `cyclone:${storm.id}:cone:${index}`,
                 polygon: {
                   hierarchy: new C.PolygonHierarchy(exterior, holes),
-                  height: 2000,
+                  classificationType: C.ClassificationType.BOTH,
                   material: blue.withAlpha(0.16),
-                  outline: true,
-                  outlineColor: blue.withAlpha(0.55),
                   arcType: C.ArcType.GEODESIC,
                 },
               });
+              [exterior, ...holes.map((hole) => hole.positions)].forEach(
+                (positions, ringIndex) => {
+                  addEntity({
+                    id: `cyclone:${storm.id}:cone:${index}:outline:${ringIndex}`,
+                    polyline: {
+                      positions,
+                      width: 1,
+                      material: blue.withAlpha(0.55),
+                      arcType: C.ArcType.GEODESIC,
+                      clampToGround: true,
+                      classificationType: C.ClassificationType.BOTH,
+                    },
+                  });
+                },
+              );
               nextCounts.cones++;
             });
             const points = [];
@@ -200,12 +219,20 @@ export function createCycloneRendering({ viewer, cesium: C }) {
                   id: `cyclone:${storm.id}:forecast:${index}`,
                   position: p,
                   point: {
+                    heightReference: C.HeightReference.CLAMP_TO_GROUND,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
                     pixelSize: 5,
                     color: white,
                     outlineColor: C.Color.BLACK,
                     outlineWidth: 1,
                   },
                   label: {
+                    heightReference: C.HeightReference.CLAMP_TO_GROUND,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    distanceDisplayCondition: new C.DistanceDisplayCondition(
+                      0,
+                      4_000_000,
+                    ),
                     text: `${point.tauHours} h`,
                     font: '11px sans-serif',
                     fillColor: white,
