@@ -88,6 +88,7 @@ export function createWindLayer({
         presentation = createPresentation({
           container: target,
           onClose: () => inspectionMarker?.clear(),
+          onUnits: (units) => layer.setParams({ units }),
         });
       inspectionMarker = createWindInspectionMarker({
         container: target,
@@ -180,7 +181,8 @@ export function createWindLayer({
       if (modelChanged) model = params.model;
       if (overlayChanged) overlay = params.overlay;
       rendering?.setOptions?.({ overlay, paused });
-      if (modelChanged || overlayChanged || unitsChanged) hideInspection();
+      if (modelChanged || overlayChanged) hideInspection();
+      else if (unitsChanged) presentation?.setUnits?.(units);
       if (modelChanged) {
         manifest = null;
         error = null;
@@ -275,21 +277,27 @@ export function createWindLayer({
           label: `${display}${index === spec.stops.length - 1 ? '+' : ''}`,
         };
       });
+      const speedLegendVisible =
+        !imageryError &&
+        (overlay === 'speed' ||
+          (overlay === 'none' && diagnostic?.renderMode === 'canvas-fallback'));
       return {
+        readout: true,
         summary: {
           label,
+          coverage: 'Global · 1° grid',
+          validTime: manifest?.cycle?.validIso,
+          issuedTime: manifest?.cycle?.runIso,
           detail: `${model === 'ifs' ? 'ECMWF IFS' : 'GFS'} forecast · ${valid || 'Unavailable'}`,
-          status: historyStatus
-            ? historyStatus
-            : loading
-              ? 'Loading forecast'
-              : preparing
-                ? 'Preparing flow'
-                : error ||
-                  manifest?.reason ||
-                  imageryError ||
-                  (scalarMissing ? 'Selected field unavailable' : null) ||
-                  (manifest?.stale ? 'Cached forecast · stale' : null),
+          status: loading
+            ? 'Loading forecast'
+            : preparing
+              ? 'Preparing flow'
+              : error ||
+                manifest?.reason ||
+                imageryError ||
+                (scalarMissing ? 'Selected field unavailable' : null) ||
+                (manifest?.stale ? 'Cached forecast · stale' : null),
           units: legendUnit,
         },
         chips: [
@@ -333,13 +341,15 @@ export function createWindLayer({
               temperature: 'Air temperature two meters above the surface',
             }[value],
           })),
-          ...Object.keys(WIND_UNITS).map((value) => ({
-            id: `units-${value}`,
-            label: value,
-            active: units === value,
-            params: { units: value },
-            title: 'Wind speed units',
-          })),
+          ...(speedLegendVisible ? Object.keys(WIND_UNITS) : []).map(
+            (value) => ({
+              id: `units-${value}`,
+              label: value,
+              active: units === value,
+              params: { units: value },
+              title: 'Wind speed units',
+            }),
+          ),
           {
             id: 'inspect-center',
             label: 'Inspect center',
@@ -352,7 +362,7 @@ export function createWindLayer({
         legend:
           scalarMissing ||
           imageryError ||
-          (overlay === 'none' && diagnostic?.renderMode === 'gpu-streamlines')
+          (overlay === 'none' && !speedLegendVisible)
             ? []
             : legend,
         info: `${model === 'ifs' ? 'ECMWF IFS' : 'GFS'} forecast · ${label} (${legendUnit})${historyStatus ? `\n${historyStatus}` : ''}\nValid: ${valid || 'Unavailable'}${loading ? ' · loading' : preparing ? ' · preparing' : ''}\nIssued: ${run || 'Unavailable'}${manifest?.stale ? ' · STALE' : ''}${error ? '\n' + error : ''}${scalarMissing ? '\nSelected field unavailable · wind remains visible' : ''}${imageryError && !scalarMissing ? '\n' + imageryError + ' · wind remains visible' : ''}`,

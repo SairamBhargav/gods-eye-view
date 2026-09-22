@@ -7,8 +7,9 @@ The same row selects No color field, Speed, Pressure or Temperature, switches wi
 km/h, m/s and mph, pauses motion, and opens **Inspect center**. That dismissible
 reading reports the sampled map-center coordinates, interpolated wind speed and
 meteorological direction, selected scalar, model, valid time and freshness; it
-clears when the model/field changes or a refresh begins. The row separately shows
-issue and valid times. Animation moves through a fixed forecast; it does not
+clears when the model/field changes or a refresh begins. The WEATHER card shows issue and valid times. Units appear on the left only
+with a speed legend; the inspection card always offers km/h, m/s and mph.
+Changing units reformats the captured reading and preserves its marker. Animation moves through a fixed forecast; it does not
 advance forecast time.
 
 Temperature is air temperature at 2 m in °C; pressure is mean sea-level pressure
@@ -54,10 +55,10 @@ history while metadata refresh continues, then resumes when a host returns.
 On 3D Tiles, observed weather imagery hides below 60 km camera height to avoid
 re-mapping dense tiles; it retains the shown frame and playback intent, then
 resumes at or above 60 km. Globe hosts are unaffected.
-Filtered infrared applies a soft brightness ramp to decoded pixels once, using
+Clouds only applies a soft brightness ramp to decoded pixels once, using
 Cesium's sRGB-to-linear conversion (`channel ** 2.2`) and smoothstep from 0.40
 to 0.70. The old 0.55 threshold is the ramp midpoint. RGB and source alpha are
-preserved in Full infrared mode; both modes use the chosen layer opacity. This
+preserved in Full image mode; both modes use the chosen layer opacity. This
 is a display filter, not a cloud mask. Satellite share links retain the display
 mode; observation history remains transient and links open latest.
 Global infrared fetches one capped 4 MiB, 2048×1024 mosaic per frame and decodes
@@ -79,13 +80,27 @@ were reused, and the study found no application licence granting reuse. Native
 hardware GPU behavior remains unverified; software-rendered checks do not
 establish native GPU performance or compatibility.
 
-Weather shows its active-product summary and legend in a right-rail WEATHER
-panel while a weather layer is on. It auto-expands once per page session, then
-remembers the user’s collapsed state. Status lines reserve their space and panel refreshes are
-coalesced per frame. Each product retains its own observed or forecast clock.
+The right-rail WEATHER panel owns active-product readouts, coverage badges,
+legends and the single observed-history timeline. The timeline appears with an
+active observed layer and at least two union times; wind alone does not show it.
+Dragging previews UTC and age locally and coalesces clock commits at 150 ms;
+release commits immediately. Latest selects the newest frame per product, and
+history labels the actual displayed frame as synced or nearest. Missing-frame
+messages use each product's eligibility gap (30 minutes, or three hours for the
+global mosaic). Wind shows forecast valid and issue times and does not follow
+history. Satellite clouds uses Clouds only / Full image configuration labels.
+
+Left weather rows retain the toggle, one status line with a source tooltip,
+configuration chips and the cyclone selection/focus list. Cyclone advisory,
+position time, wind, pressure, geometry status and the official advisory link
+live in the card. Controls opens the corresponding left row. The panel hides
+when empty, auto-expands once per page session and then preserves the user's
+collapsed state. Status lines reserve their space and refreshes are coalesced
+per frame. Generic keyed rail cards and the native rail timeline preserve DOM
+nodes and avoid identical writes; the weather panel owns descriptor mapping.
 Inspection emphasizes the chosen scalar and marks the exact sampled location;
 the passive marker follows that snapshot, respects globe occlusion and disappears
-on dismissal, field/model/unit changes, disable or teardown. Clean view and
+on dismissal, field/model changes, disable or teardown. Clean view and
 recording mode hide weather presentation with the other controls. Scalar changes
 reuse native wind geometry when the model, issue/valid time, grid and U/V values
 are identical; new or revised wind still rebuilds. Source and renderer clocks

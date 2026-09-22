@@ -78,6 +78,9 @@ export function inspectWindAtCenter(
     : null;
   return {
     position: point,
+    speed,
+    from,
+    units,
     coordinates: `${Math.abs(lat).toFixed(2)}°${lat < 0 ? 'S' : 'N'} · ${Math.abs(lon).toFixed(2)}°${lon < 0 ? 'W' : 'E'}`,
     wind: `${formatWindSpeed(speed, units)}${from === 'Calm' ? ' · calm' : ` from ${from}`}`,
     scalarLabel:

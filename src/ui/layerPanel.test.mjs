@@ -89,3 +89,43 @@ test('partial feed controls distinguish incomplete records from stale data and o
   panel._syncToggleButton(button, layer);
   assert.equal(button.textContent, 'OFF');
 });
+
+test('readout rows render a status with tooltip and configuration chips; ordinary rows keep info and legends', async () => {
+  const { LayerPanel } = await import('./layerPanel.js');
+  const { railFixture } = await import('./railTestFixture.mjs');
+  const f = railFixture();
+  const previousDocument = globalThis.document;
+  globalThis.document = f.document;
+  try {
+    let readout = true;
+    const panel = new LayerPanel({
+      getRowControls: () => ({
+        readout,
+        summary: { status: 'Loading' },
+        info: 'Detailed time',
+        infoTitle: 'Source coverage',
+        chips: [{ id: 'config', label: 'Soft' }],
+        legend: [{ label: 'Rain', color: '#abcdef' }],
+      }),
+    });
+    panel._syncRowControls(f.container, { id: 'weather-radar', enabled: true });
+    assert.equal(f.container.children.length, 2);
+    assert.equal(f.container._rowControlsInfo.textContent, 'Loading');
+    assert.equal(f.container._rowControlsInfo.title, 'Source coverage');
+    assert.equal(
+      f.container._rowControlsInfo.className,
+      'data-toggle-controls-status',
+    );
+    assert.equal(f.container.querySelector('.data-toggle-legend-item'), null);
+    assert.equal(f.container.children[0].textContent, 'Soft');
+    readout = false;
+    panel._syncRowControls(f.container, { id: 'other', enabled: true });
+    assert.equal(f.container._rowControlsInfo.textContent, 'Detailed time');
+    assert.ok(f.container.querySelector('.data-toggle-legend-item'));
+    readout = true;
+    panel._syncRowControls(f.container, { id: 'weather-radar', enabled: true });
+    assert.equal(f.container.querySelector('.data-toggle-legend-item'), null);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});

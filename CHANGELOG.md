@@ -2,18 +2,28 @@
 
 ## Unreleased — weather review
 
+- Move weather times, coverage, legends and cyclone advisory details into keyed
+  right-rail cards; left rows keep status and configuration. Use one native
+  observed-history timeline with local preview and coalesced drag commits.
+- Add reusable rail card and timeline components. Keep panel collapse, count,
+  hidden-empty behavior and first-appearance expansion.
+- Show wind unit controls beside speed legends and inside inspection readings;
+  changing units preserves the sampled location and open reading.
+- Name satellite imagery Satellite clouds, with Clouds only / Full image modes
+  and explicit regional coverage. Existing share parameters are unchanged.
+
 - Share one observed history clock across radar, infrared and lightning. Step
   through their union timeline with bounded nearest-at-or-before selection;
   hide products without an eligible frame. Latest uses each product's newest
   observation; playback waits for all frame loads to settle before advancing.
 - Label wind as a forecast that does not follow observed history. Keep history
-  transient and the existing row controls synchronized.
+  transient and product readouts synchronized.
 
 - Keep Google 3D Tiles drawing while draped weather imagery loads and retain the
   old observation until the replacement has rendered.
 - Decode one bounded global infrared mosaic per frame on both map hosts, then
   crop local tiles to avoid request-dependent brightness seams.
-- Add Filtered / Full infrared controls and share-link state. Filtered mode uses
+- Add Clouds only / Full image controls and share-link state. Filtered mode uses
   a soft linear-brightness alpha ramp from 0.40 to 0.70 around the old 0.55 cut.
 
 - On 3D Tiles, observed weather imagery hides below 60 km camera height to avoid

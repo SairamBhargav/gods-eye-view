@@ -2,7 +2,7 @@ import { layerFeedState } from '../data/feedState.js';
 export { layerFeedState } from '../data/feedState.js';
 import { GUIDANCE_STATUSES } from '../loadingFeedback.js';
 import { keySetupRequirement } from '../keySetupCore.mjs';
-import { createWeatherSummary } from './weatherSummary.js';
+import { createWeatherPanel } from './weatherPanel.js';
 const FEED_STATE_LABELS = Object.freeze({
   nominal: 'ON',
   loading: 'LOADING',
@@ -109,7 +109,9 @@ export class LayerPanel {
     hasRowControls,
     subscribeRowControls,
     onHiddenRefresh = () => {},
+    weatherClock,
   }) {
+    this.weatherClock = weatherClock;
     this.getAll = getLayers;
     this.isEnabled = isEnabled;
     this.setEnabled = setEnabled;
@@ -127,8 +129,9 @@ export class LayerPanel {
     if (this._destroyed) return;
     this._releaseBindings();
     this._toggleContainer = container;
-    this._weatherSummary?.destroy();
-    this._weatherSummary = createWeatherSummary({
+    this._weatherPanel?.destroy();
+    this._weatherPanel = createWeatherPanel({
+      clock: this.weatherClock,
       container:
         container?.ownerDocument?.getElementById?.('weather-panel-body'),
       onOpen: (id) => {
@@ -137,9 +140,10 @@ export class LayerPanel {
           panel.querySelector('[data-collapse-target="data-panel"]')?.click();
         const row = container.querySelector(`[data-layer-id="${id}"]`);
         row?.scrollIntoView?.({ block: 'nearest' });
-        row
-          ?.querySelector('.data-toggle-chip:not(:disabled)')
-          ?.focus({ preventScroll: true });
+        const target =
+          row?.querySelector('.data-toggle-chip:not(:disabled)') ||
+          row?.querySelector('.data-toggle-btn');
+        target?.focus({ preventScroll: true });
       },
     });
     this._renderToggles();
@@ -158,8 +162,8 @@ export class LayerPanel {
     if (this._destroyed) return;
     this._destroyed = true;
     this._releaseBindings();
-    this._weatherSummary?.destroy();
-    this._weatherSummary = null;
+    this._weatherPanel?.destroy();
+    this._weatherPanel = null;
     this._toggleContainer = null;
   }
   _renderToggles() {
@@ -301,7 +305,7 @@ export class LayerPanel {
 
       this._toggleContainer.appendChild(row);
     }
-    this._refreshWeatherSummary();
+    this._refreshWeatherPanel();
   }
 
   _scheduleRowControlsRefresh() {
@@ -327,8 +331,8 @@ export class LayerPanel {
     this._refreshTogglePanel();
   }
 
-  _refreshWeatherSummary() {
-    this._weatherSummary?.update(
+  _refreshWeatherPanel() {
+    this._weatherPanel?.update(
       this.getAll()
         .filter(
           (layer) =>
@@ -370,10 +374,16 @@ export class LayerPanel {
     if (!container) return;
     const controls = layer.enabled ? this._rowControlsFor(layer.id) : null;
     const chips = controls?.chips || [];
-    const legend = controls?.legend || [];
+    const legend = controls?.readout ? [] : controls?.legend || [];
+    const infoText = controls?.readout
+      ? controls.summary?.status
+      : controls?.info;
     this._syncRowList(listContainer, controls?.list || null);
     container.hidden =
-      chips.length === 0 && legend.length === 0 && !controls?.info;
+      chips.length === 0 &&
+      legend.length === 0 &&
+      !infoText &&
+      !controls?.readout;
 
     const info = container._rowControlsInfo || null;
     const firstLegend = container.querySelector('.data-toggle-legend-item');
@@ -431,18 +441,22 @@ export class LayerPanel {
       }
       container._legendSignature = legendSignature;
     }
-    if (controls?.info || info) {
+    if (infoText || controls?.readout || info) {
       const node = info || document.createElement('div');
       if (!info) {
-        node.className = 'data-toggle-controls-info';
         container.appendChild(node);
         container._rowControlsInfo = node;
       }
-      const text = controls?.info ? String(controls.info) : '';
+      const className = controls?.readout
+        ? 'data-toggle-controls-status'
+        : 'data-toggle-controls-info';
+      if (node.className !== className) node.className = className;
+      const text = infoText ? String(infoText) : '';
       const title = controls?.infoTitle || '';
       if (node.textContent !== text) node.textContent = text;
       if (node.title !== title) node.title = title;
-      if (node.hidden !== !text) node.hidden = !text;
+      const hidden = !controls?.readout && !text;
+      if (node.hidden !== hidden) node.hidden = hidden;
     }
   }
 
@@ -559,7 +573,7 @@ export class LayerPanel {
         row.querySelector('.data-row-list'),
       );
     }
-    this._refreshWeatherSummary();
+    this._refreshWeatherPanel();
   }
 
   _buildMetaText(layer) {

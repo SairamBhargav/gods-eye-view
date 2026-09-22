@@ -261,8 +261,9 @@ test('an imagery failure appears in status and cannot retain a misleading field 
   assert.deepEqual(layer.getRowControls().legend, []);
   layer.destroy();
 });
-test('changing units dismisses an inspection snapshot showing the previous units', () => {
+test('changing row units reformats the inspection without hiding it', () => {
   let hidden = 0;
+  const formatted = [];
   const rendering = Object.fromEntries(
     ['attach', 'start', 'stop', 'clear', 'destroy'].map((name) => [
       name,
@@ -273,6 +274,7 @@ test('changing units dismisses an inspection snapshot showing the previous units
     feed: { getSnapshot: async () => complete('gfs') },
     createRendering: () => rendering,
     createPresentation: () => ({
+      setUnits(value) { formatted.push(value); },
       hide() {
         hidden++;
       },
@@ -283,7 +285,8 @@ test('changing units dismisses an inspection snapshot showing the previous units
     container: { appendChild() {}, ownerDocument: { createElement() {} } },
   });
   layer.setParams({ units: 'mph' });
-  assert.equal(hidden, 1);
+  assert.equal(hidden, 0);
+  assert.deepEqual(formatted, ['mph']);
   layer.destroy();
 });
 
@@ -347,7 +350,7 @@ test('weather summary describes the selected forecast and count remains numeric'
   layer.destroy();
 });
 
-test('inspection marker clears with dismissal, changed fields/units/models and disable', async () => {
+test('inspection marker clears with dismissal, changed fields/models and disable', async () => {
   const nodes = [];
   let listener;
   let dismiss;
@@ -385,7 +388,13 @@ test('inspection marker clears with dismissal, changed fields/units/models and d
   layer.init(viewer);
   layer.enable();
   await layer.update();
-  for (const change of [() => dismiss(), () => layer.setParams({ units: 'mph' }), () => layer.setParams({ overlay: 'speed' }), () => layer.setParams({ model: 'ifs' }), () => layer.disable()]) {
+  layer.setParams({ inspect: true });
+  const retained = nodes[0];
+  layer.setParams({ units: 'mph' });
+  assert.equal(nodes[0], retained);
+  assert.equal(nodes.length, 1);
+  assert.equal(typeof listener, 'function');
+  for (const change of [() => dismiss(), () => layer.setParams({ overlay: 'speed' }), () => layer.setParams({ model: 'ifs' }), () => layer.disable()]) {
     layer.setParams({ inspect: true });
     assert.equal(nodes.length, 1);
     assert.equal(reading.coordinates, '0.00°N · 0.00°E');
@@ -406,7 +415,7 @@ test('observed history labels wind as a forecast without changing its data or pa
   layer.setRowControlsListener(() => changes++);
   const params = layer.getParams();
   await clock.setTarget('2026-09-14T12:00:00.000Z');
-  assert.equal(layer.getRowControls().summary.status, 'Forecast · does not follow history');
+  assert.equal(layer.getRowControls().summary.status, null, 'history does not mask source status');
   assert.ok(changes > 0);
   assert.match(layer.getRowControls().info, /Forecast · does not follow history/);
   assert.deepEqual(layer.getParams(), params);
@@ -417,4 +426,18 @@ test('observed history labels wind as a forecast without changing its data or pa
   await clock.setTarget('2026-09-14T12:00:00.000Z');
   assert.equal(changes, before);
   clock.destroy();
+});
+
+test('wind unit chips appear only alongside a speed legend, including canvas trails', async () => {
+  let renderMode = 'gpu-streamlines'; let imageryError = null;
+  const layer = createWindLayer({ feed: { getSnapshot: async () => complete('gfs') }, createRendering: () => ({ attach() {}, start() {}, clear() {}, setField() {}, setOptions() {}, getDiagnostics: () => ({ renderMode, imageryError }), stop() {}, destroy() {} }) });
+  layer.init({ container: {} }); layer.enable(); await layer.update();
+  const unitChips = () => layer.getRowControls().chips.filter(({ id }) => id.startsWith('units-'));
+  assert.equal(layer.getRowControls().readout, true); assert.equal(layer.getRowControls().summary.coverage, 'Global · 1° grid');
+  assert.deepEqual(unitChips(), []); assert.deepEqual(layer.getRowControls().legend, []);
+  renderMode = 'canvas-fallback'; assert.equal(unitChips().length, 3); assert.ok(layer.getRowControls().legend.length);
+  renderMode = 'gpu-streamlines'; layer.setParams({ overlay: 'speed' }); assert.equal(unitChips().length, 3);
+  imageryError = 'Unavailable'; assert.deepEqual(unitChips(), []); imageryError = null;
+  for (const overlay of ['pressure', 'temperature', 'none']) { layer.setParams({ overlay }); assert.deepEqual(unitChips(), []); }
+  layer.destroy();
 });

@@ -314,15 +314,32 @@ export function createCyclonesLayer({
               ? geometry
               : null);
       const detail = storm
-        ? `${storm.name} · ${classificationName(storm.classification)} · Advisory ${storm.advisoryNumber} · ${utc(storm.issuedAt)}`
+        ? `${storm.name} · ${classificationName(storm.classification)} · Advisory ${storm.advisoryNumber} · issued ${utc(storm.issuedAt)}`
         : empty
           ? 'No active NHC/CPHC systems'
           : snapshot?.storms.length
             ? 'No storm selected'
             : 'Advisories unavailable';
       return {
+        readout: true,
         summary: {
           label: 'Cyclones · NHC / CPHC',
+          coverage: 'Atlantic + E/C Pacific',
+          advisoryUrl: storm?.advisoryUrl,
+          lines: storm
+            ? [
+                {
+                  id: 'position',
+                  text: `Position as of ${utc(storm.positionAt)}`,
+                  muted: true,
+                },
+                {
+                  id: 'intensity',
+                  text: `Maximum sustained wind: ${number(storm.windKt, 'kt')} · Pressure: ${number(storm.pressureHpa, 'hPa')}`,
+                },
+                { id: 'geometry', text: geometry, muted: true },
+              ]
+            : [],
           detail,
           status,
           units: 'kt',
@@ -338,15 +355,7 @@ export function createCyclonesLayer({
             params: { stormId: item.id, focus: true },
           })),
         },
-        chips: [
-          {
-            id: 'advisory',
-            label: 'Official advisory ↗',
-            disabled: !storm?.advisoryUrl,
-            params: { advisory: true },
-            title: 'Open the official NHC advisory in a new tab',
-          },
-        ],
+        chips: [],
         legend: storm
           ? [
               { label: 'Advisory center / forecast track', color: '#7fe6ed' },

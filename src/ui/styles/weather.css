@@ -1,4 +1,4 @@
-/* Weather controls form four stable rows: model, field, units, inspection. */
+/* Weather rows hold status and configuration; readouts live in the rail. */
 [data-layer-id='wind'] .data-toggle-controls:not([hidden]) {
   display: grid;
   grid-template-columns: repeat(60, minmax(0, 1fr));
@@ -218,7 +218,7 @@
 }
 #weather-panel.collapsed #weather-panel-body,
 #weather-panel[hidden],
-.weather-summary[hidden] {
+.weather-readout[hidden] {
   display: none !important;
 }
 #weather-panel.collapsed .panel-title {
@@ -231,60 +231,114 @@
 #weather-panel.collapsed .weather-panel-inner {
   padding-bottom: 10px;
 }
-.weather-summary {
+/* Shared readout primitives also fit other managed rail panels. */
+.weather-readout,
+.rail-card,
+.rail-timeline {
+  min-width: 0;
   color: #dcebf0;
   font:
     11px/1.45 system-ui,
     sans-serif;
 }
-.weather-summary-product {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  padding: 6px 5px;
-  cursor: pointer;
+.rail-card {
+  padding: 8px 5px;
+  overflow-wrap: anywhere;
 }
-.weather-summary-product + .weather-summary-product {
+.rail-card + .rail-card {
   border-top: 1px solid #ffffff16;
 }
-.weather-summary-product:hover {
-  background: #ffffff08;
+.rail-card-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
 }
-.weather-summary-product:focus-visible {
-  outline: 2px solid #89e5e5;
-  outline-offset: 2px;
-}
-.weather-summary-product > strong,
-.weather-summary-product > span {
-  display: block;
-}
-.weather-summary-product > [hidden] {
-  display: none;
-}
-.weather-summary-product strong {
+.rail-card-title {
+  flex: 1 1 auto;
   font-size: 12px;
+  min-width: 0;
 }
-.weather-summary-product > span {
+.rail-card-badge {
+  font-size: 9px;
+  font-variant-caps: all-small-caps;
+  color: #afc5ce;
+}
+.rail-card-header .data-toggle-chip {
+  flex: 0 0 auto;
+  font-size: 9px;
+}
+.rail-card-lines {
+  margin-top: 4px;
+}
+.rail-card-line {
+  white-space: pre-line;
+}
+.rail-card-line.muted,
+.rail-card-scale {
   color: #afc5ce;
   font-size: 10px;
 }
-.weather-summary-product .weather-summary-status {
+.weather-card [data-line-id='status'] {
   min-height: 1.45em;
   color: #ffd595;
 }
-.weather-summary-ramp {
+.rail-card-ramp {
+  position: relative;
   height: 4px;
   border-radius: 2px;
   margin-top: 5px;
 }
-.weather-summary-scale {
+.rail-card-scale {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.rail-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.rail-card [hidden],
+.weather-timeline-block[hidden] {
+  display: none !important;
+}
+.rail-timeline {
+  padding: 5px;
+  border-bottom: 1px solid #ffffff16;
+}
+.rail-timeline-track {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.rail-timeline-track input {
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+}
+.rail-timeline-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.rail-timeline-readout {
+  flex: 1 1 120px;
+  min-width: 0;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.data-toggle-controls-status {
+  flex-basis: 100%;
+  grid-column: 1 / -1;
+  order: -1;
+  min-height: 1.45em;
+  font-size: 10px;
+  color: #b9ccd0;
 }
 
 body.ui-clean-view .gev-wind-inspection-marker,
@@ -302,16 +356,13 @@ body.recording-mode .gev-wind-reading {
     display: none;
   }
 }
-.weather-summary-ramp {
-  position: relative;
-}
-.weather-summary-zero {
+.rail-card-zero {
   position: absolute;
   top: -2px;
   height: 8px;
   border-left: 1px solid #fff;
 }
-.weather-summary-zero::after {
+.rail-card-zero::after {
   content: '0°C';
   position: absolute;
   top: 8px;

@@ -461,15 +461,6 @@ export function createWeatherLayer({
     getRowControls() {
       const shared = clock?.getState();
       const followLatest = isLatest();
-      const sharedTimes = shared?.timeline ?? [];
-      const at = shared?.target ?? sharedTimes.at(-1);
-      const canEarlier = sharedTimes.some(
-        (time) => Date.parse(time) < Date.parse(at),
-      );
-      const canLater = sharedTimes.some(
-        (time) => Date.parse(time) > Date.parse(at),
-      );
-      const sharedPlaying = shared?.playing ?? playing;
       const missing =
         noFrame &&
         shared?.mode === 'history' &&
@@ -523,14 +514,22 @@ export function createWeatherLayer({
           lat > b.north ||
           (lightning && lon > 0 && lon < 110));
       return {
+        readout: true,
         summary: {
           label: radar
             ? 'Rain radar · US'
             : lightning
               ? 'Lightning density · 15 min'
+              : 'Satellite clouds',
+          coverage: radar
+            ? 'CONUS'
+            : lightning
+              ? 'Americas + Pacific'
               : product === 'clouds'
-                ? 'Satellite infrared · global'
-                : 'Satellite infrared · N. America',
+                ? 'Global · 60°S–60°N'
+                : 'North America',
+          shownTime: time,
+          maxGapMinutes: maxGap() / 60_000,
           detail: time
             ? `${followLatest ? 'Observed' : 'History'} · ${utc(time)} · ${lag}${relation}`
             : missing
@@ -564,75 +563,29 @@ export function createWeatherLayer({
                 params: { product: value },
                 title:
                   value === 'clouds'
-                    ? 'Hourly global infrared; usually 2–3 hours delayed'
-                    : 'GOES regional infrared; approximately 5-minute updates',
+                    ? 'Hourly global mosaic; usually 2–3 hours delayed'
+                    : 'GOES regional clouds; approximately 5-minute updates',
               }))
             : []),
           ...(satellite
             ? [
                 {
                   id: 'filtered',
-                  label: 'Filtered',
+                  label: 'Clouds only',
                   active: infrared === 'filtered',
                   params: { infrared: 'filtered' },
                   title:
-                    'Dim infrared below a brightness threshold so cold cloud tops stand out; a display filter, not a cloud mask',
+                    'Dim everything but the bright, cold cloud tops; a brightness filter, not a cloud mask',
                 },
                 {
                   id: 'full',
-                  label: 'Full infrared',
+                  label: 'Full image',
                   active: infrared === 'full',
                   params: { infrared: 'full' },
                   title: 'The complete infrared image at the chosen opacity',
                 },
               ]
             : []),
-          {
-            id: 'previous',
-            label: '‹ Earlier',
-            disabled: shared
-              ? !canEarlier
-              : hostHidden || loading || index <= 0,
-            params: { step: -1 },
-            title: 'Previous observed frame',
-          },
-          {
-            id: 'play',
-            label:
-              sharedPlaying && (shared || !hostHidden)
-                ? 'Pause'
-                : 'Play history',
-            active: Boolean(sharedPlaying && (shared || !hostHidden)),
-            disabled: shared
-              ? sharedTimes.length < 2
-              : hostHidden ||
-                (loading && !playing) ||
-                times.length < 2 ||
-                !!motion?.matches,
-            params: { play: true },
-            title: 'Replay recent observations; this is not a forecast',
-          },
-          {
-            id: 'next',
-            label: 'Later ›',
-            disabled: shared
-              ? !canLater
-              : hostHidden || loading || !current || index >= times.length - 1,
-            params: { step: 1 },
-            title: 'Next observed frame',
-          },
-          {
-            id: 'latest',
-            label: 'Latest',
-            active: followLatest,
-            disabled: shared
-              ? shared.products.length === 0
-              : hostHidden || !manifest,
-            params: { latest: true },
-            title: lightning
-              ? 'Follow the newest observation; refresh every ten minutes'
-              : 'Follow the newest observation; refresh every two minutes',
-          },
           ...['light', 'strong'].map((value) => ({
             id: `opacity-${value}`,
             label: value === 'light' ? 'Soft' : 'Vivid',
@@ -668,7 +621,7 @@ export function createWeatherLayer({
           ? 'NOAA/NWS 15-minute lightning density derived from Vaisala NLDN/GLD360. Coverage 110°E across the Pacific/Americas to 0°, 25°S–80°N. Not a live strike count, global coverage or a safety warning.'
           : radar
             ? 'NOAA MRMS radar echoes indicate precipitation patterns, not rain rate, a storm warning or a future forecast. Native source approximately 1 km; display is limited to level 6. Frames use exact advertised observation times.'
-            : 'Filtered infrared softly dims pixels below a brightness threshold so cold cloud tops stand out. Full infrared shows the complete image at the chosen opacity. This is a brightness display filter, not a cloud mask or measured cloud volume. Global mosaic coverage and freshness differ from regional GOES.',
+            : 'GOES-19/18 longwave infrared Band 14 regional; NESDIS global longwave mosaic. Clouds only dims everything but bright, cold cloud tops; a brightness filter, not a cloud mask. Coverage and freshness differ by region.',
       };
     },
     setRowControlsListener(value) {

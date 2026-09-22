@@ -206,3 +206,17 @@ test('selected scalar is the primary reading and missing scalar restores wind em
   assert.equal(f.find('gev-wind-reading__wind').textContent, reading.wind);
   view.destroy();
 });
+
+test('unit controls reformat the captured reading in place without closing or moving focus', () => {
+  const f = fixture(); const selected = [];
+  let view;
+  view = createWindPresentation({ container: f.container, onUnits: (unit) => { selected.push(unit); view.setUnits(unit); } });
+  view.show({ ...reading, speed: 5, from: 'SW', units: 'km/h' });
+  const card = f.find('gev-wind-reading'); const wind = f.find('gev-wind-reading__wind'); const units = f.find('gev-wind-reading__units');
+  assert.equal(wind.textContent, '18.0 km/h from SW');
+  const mph = units.children[2]; mph.focus(); mph.dispatchEvent(new Event('click'));
+  assert.deepEqual(selected, ['mph']); assert.equal(card.hidden, false); assert.equal(wind.textContent, '11.2 mph from SW'); assert.equal(f.container.ownerDocument.activeElement, mph);
+  view.setUnits('m/s'); assert.equal(wind.textContent, '5.0 m/s from SW'); assert.equal(f.find('gev-wind-reading__coordinates').textContent, reading.coordinates); assert.equal(card.hidden, false);
+  view.hide(); view.setUnits('km/h'); assert.equal(card.hidden, true);
+  view.destroy(); mph.dispatchEvent(new Event('click')); assert.deepEqual(selected, ['mph']);
+});

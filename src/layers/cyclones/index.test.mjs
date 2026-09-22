@@ -470,6 +470,11 @@ test('advisory selection uses accessible row descriptors and shared camera hando
   h.layer.enable();
   assert.equal(await h.layer.update(), true);
   const controls = h.layer.getRowControls();
+  assert.equal(controls.readout, true);
+  assert.deepEqual(controls.chips, []);
+  assert.equal(controls.summary.coverage, 'Atlantic + E/C Pacific');
+  assert.equal(controls.summary.advisoryUrl, storm().advisoryUrl);
+  assert.equal(controls.summary.lines.length, 3);
   assert.match(controls.list.ariaLabel, /NHC/);
   assert.equal(controls.list.items.length, 2);
   assert.equal(controls.list.items[0].active, true);

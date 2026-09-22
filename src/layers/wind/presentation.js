@@ -1,3 +1,5 @@
+import { formatWindSpeed, WIND_UNITS } from './inspection.js';
+
 const CARD_CSS = `
 .gev-wind-reading {
   position: absolute; right: 16px; bottom: 112px; z-index: 220;
@@ -28,6 +30,7 @@ const CARD_CSS = `
 .gev-wind-reading[data-scalar="true"] .gev-wind-reading__scalar-label { font-size: 12px; margin-bottom: 4px; }
 .gev-wind-reading__scalar { margin: 10px 0 0; font-size: 15px; }
 .gev-wind-reading__scalar-label { color: #a7bec8; margin-right: 8px; }
+.gev-wind-reading__units { display: flex; gap: 6px; margin-top: 10px; }
 .gev-wind-reading__metadata { margin-top: 14px; padding-top: 10px; border-top: 1px solid #29424d; }
 .gev-wind-reading__metadata p { margin: 3px 0; overflow-wrap: anywhere; }
 .gev-wind-reading__status { color: #9ce4ee; font-weight: 600; }
@@ -38,13 +41,19 @@ const CARD_CSS = `
 `;
 
 /** Owned, on-demand reading surface. Values and freshness come from the caller. */
-export function createWindPresentation({ container, onClose = () => {} } = {}) {
+export function createWindPresentation({
+  container,
+  onClose = () => {},
+  onUnits = () => {},
+} = {}) {
   const document = container?.ownerDocument;
   if (!document?.createElement || !container?.appendChild) {
     throw new TypeError('Wind presentation requires a DOM container');
   }
   let destroyed = false;
   let returnFocus = null;
+  let currentReading = null;
+  let units = 'km/h';
   const make = (tag, suffix, text) => {
     const element = document.createElement(tag);
     element.className = `gev-wind-reading${suffix ? `__${suffix}` : ''}`;
@@ -66,6 +75,18 @@ export function createWindPresentation({ container, onClose = () => {} } = {}) {
   const context = make('p', 'context', 'Map center at inspection');
   const coordinates = make('p', 'coordinates');
   const wind = make('p', 'wind');
+  const unitControls = make('div', 'units');
+  const unitButtons = Object.keys(WIND_UNITS).map((unit) => {
+    const button = make('button', 'unit', unit);
+    button.type = 'button';
+    button.title = 'Wind speed units';
+    const click = () => {
+      if (!destroyed) onUnits(unit);
+    };
+    button.addEventListener('click', click);
+    unitControls.appendChild(button);
+    return { button, unit, click };
+  });
   const scalar = make('p', 'scalar');
   const scalarLabel = make('span', 'scalar-label');
   const scalarValue = make('span', 'scalar-value');
@@ -86,6 +107,7 @@ export function createWindPresentation({ container, onClose = () => {} } = {}) {
     coordinates,
     scalar,
     wind,
+    unitControls,
     metadata,
     explanation,
   ]) {
@@ -94,6 +116,7 @@ export function createWindPresentation({ container, onClose = () => {} } = {}) {
   // Model/field changes hide silently: they must not move the user's focus.
   const hide = () => {
     card.hidden = true;
+    currentReading = null;
     returnFocus = null;
   };
   const dismiss = () => {
@@ -117,11 +140,27 @@ export function createWindPresentation({ container, onClose = () => {} } = {}) {
     element.textContent = value == null ? '' : String(value);
     element.hidden = !element.textContent;
   };
+  const setUnits = (value) => {
+    if (destroyed || !Object.hasOwn(WIND_UNITS, value)) return;
+    units = value;
+    for (const { button, unit } of unitButtons) {
+      button.className = `data-toggle-chip${unit === units ? ' active' : ''}`;
+      button.setAttribute('aria-pressed', String(unit === units));
+    }
+    if (currentReading && Number.isFinite(currentReading.speed))
+      text(
+        wind,
+        `${formatWindSpeed(currentReading.speed, units)}${currentReading.from === 'Calm' ? ' · calm' : ` from ${currentReading.from}`}`,
+      );
+  };
   return {
+    setUnits,
     show(reading = {}) {
       if (destroyed) return;
       text(coordinates, reading.coordinates);
+      currentReading = reading;
       text(wind, reading.wind);
+      setUnits(reading.units || units);
       text(scalarLabel, reading.scalarLabel);
       text(scalarValue, reading.scalarValue);
       scalar.hidden = scalarValue.hidden;
@@ -140,6 +179,9 @@ export function createWindPresentation({ container, onClose = () => {} } = {}) {
       if (destroyed) return;
       destroyed = true;
       returnFocus = null;
+      currentReading = null;
+      for (const { button, click } of unitButtons)
+        button.removeEventListener('click', click);
       close.removeEventListener('click', dismiss);
       card.removeEventListener('keydown', keydown);
       card.remove();

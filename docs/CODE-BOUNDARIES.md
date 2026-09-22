@@ -277,6 +277,35 @@ share restoration and movement of controls between containers remain caller-owne
 Existing helper imports from `cockpitMath.js` and `rightRailPolicy.js` remain
 compatible through re-exports.
 
+### Adding a right-rail readout panel
+
+Add the shell in `src/ui/templates/context.html` inside `#right-context-rail`:
+a `.panel-collapsible` with a stable `id` and matching `data-panel-id`, the
+existing `.panel-header`, collapse button and a dedicated body. Register it
+with the existing panel chrome/layout owners; do not allocate rail space in
+the body renderer. Set `hidden` while empty so the allocator ignores it, and
+expand through the existing collapse button only on first appearance per page
+session. Preserve the user's later collapse choice, including body remounts.
+
+Compose `createRailCards({ container, document })` and
+`createRailTimeline({ container, document, onCommit, onPreview, onStep,
+onLatest, onPlay })`. Cards reconcile `id`, title, badge, keyed lines, legend
+and keyed actions in place; actions use buttons or new-tab links in a footer.
+An action may opt into `placement: 'header'` and supply a `dataset` for compact
+Controls buttons. Optional card/badge/slider class names provide feature styling.
+The timeline receives ticks, index, mode, playing, readout and disabled state.
+Its preview callback receives the tick and index and may return readout text;
+commits receive the same values after a 150 ms coalesced drag or final change.
+Feature adapters own data mapping and service subscriptions; generic modules
+own DOM/listeners/timers and release them in `destroy()`.
+
+Keep persistence with panel chrome: collapse uses
+`godsEyeView.v6.panelCollapsed.<panelId>`, position uses
+`godsEyeView.v8.panelPos.<panelId>`, and share state uses the registered panel id.
+Do not rename existing
+ids or reset persistence versions when adding a body. The WEATHER adapter is
+`src/ui/weatherPanel.js`; its observed-history selection remains transient.
+
 ## Visual input
 
 `gods-eye-view/ui/input` exports `bindApplicationShortcuts` and

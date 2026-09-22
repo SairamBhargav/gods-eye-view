@@ -42,9 +42,9 @@ test('catalogs construct distinct layers and classification from their supplied 
   assert.equal(first.layers.length, 26);
   assert.notEqual(first.weatherClock, second.weatherClock);
   await first.weatherClock.setTarget('2026-09-21T12:00:00.000Z');
-  assert.equal(
-    first.get('wind').getRowControls().summary.status,
-    'Forecast · does not follow history',
+  assert.match(
+    first.get('wind').getRowControls().info,
+    /Forecast · does not follow history/,
   );
   assert.equal(second.get('wind').getRowControls().summary.status, null);
   for (const id of ['weather-radar', 'weather-satellite', 'weather-lightning'])

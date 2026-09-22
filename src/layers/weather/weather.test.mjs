@@ -556,8 +556,8 @@ test('reduced motion blocks autoplay but permits manual history and stops newly 
   h.layer.setParams({ play: true });
   assert.equal(h.layer.getDiagnostics().timerActive, false);
   assert.equal(
-    h.layer.getRowControls().chips.find((chip) => chip.id === 'play').disabled,
-    true,
+    h.layer.getRowControls().chips.some((chip) => chip.id === 'play'),
+    false,
   );
   h.layer.setParams({ step: -1 });
   assert.equal(h.stages[1].time, times[1]);
@@ -782,8 +782,7 @@ test('manifest refresh during a manual history stage does not strand loading con
   assert.equal(h.layer.getStats().loading, false);
   assert.equal(h.layer.getStats().observedAt, times[1]);
   assert.equal(
-    h.layer.getRowControls().chips.find((chip) => chip.id === 'previous')
-      .disabled,
+    h.layer.getRowControls().chips.some((chip) => chip.id === 'previous'),
     false,
   );
   h.layer.destroy();
@@ -1443,7 +1442,7 @@ test('satellite mode chips restage history without changing time or latest-follo
       .getRowControls()
       .chips.slice(0, 4)
       .map((chip) => chip.label),
-    ['N. America', 'Global', 'Filtered', 'Full infrared'],
+    ['N. America', 'Global', 'Clouds only', 'Full image'],
   );
   h.stages[2].finish();
   await flush();
@@ -1553,20 +1552,8 @@ test('one row steps every registered observation; missing frames hide and latest
   await flush();
   assert.match(satellite.layer.getRowControls().summary.detail, /synced/);
   assert.ok(satelliteChanges > 0);
-  assert.deepEqual(
-    transport(radar).map(({ id, active, disabled, label }) => ({
-      id,
-      active,
-      disabled,
-      label,
-    })),
-    transport(satellite).map(({ id, active, disabled, label }) => ({
-      id,
-      active,
-      disabled,
-      label,
-    })),
-  );
+  assert.deepEqual(transport(radar), []);
+  assert.deepEqual(transport(satellite), []);
   satellite.layer.setParams({ step: -1 });
   await flush();
   radar.stages.at(-1).finish();
@@ -1731,4 +1718,42 @@ test('switching to history cancels a still-loading latest refresh and a later ta
   await update;
   assert.equal(h.layer.getDiagnostics().time, times[1]);
   assert.equal(h.layer.getDiagnostics().clock.target, times[1]);
+});
+
+test('observed descriptors keep configuration only and label satellite clouds by coverage', () => {
+  for (const [id, coverage] of [
+    ['weather-radar', 'CONUS'],
+    ['weather-satellite', 'North America'],
+    ['weather-lightning', 'Americas + Pacific'],
+  ]) {
+    const h = layerHarness({ id });
+    const controls = h.layer.getRowControls();
+    assert.equal(controls.readout, true);
+    assert.equal(controls.summary.coverage, coverage);
+    assert.equal(
+      controls.chips.some(({ id }) =>
+        ['previous', 'play', 'next', 'latest'].includes(id),
+      ),
+      false,
+    );
+    if (id === 'weather-satellite') {
+      assert.equal(h.layer.name, 'Satellite clouds');
+      assert.equal(controls.summary.label, 'Satellite clouds');
+      assert.match(
+        controls.infoTitle,
+        /GOES-19\/18 longwave infrared Band 14 regional; NESDIS global longwave mosaic/,
+      );
+      assert.equal(
+        controls.chips.find(({ id }) => id === 'filtered').title,
+        'Dim everything but the bright, cold cloud tops; a brightness filter, not a cloud mask',
+      );
+      h.layer.setParams({ product: 'clouds' });
+      assert.equal(
+        h.layer.getRowControls().summary.coverage,
+        'Global · 60°S–60°N',
+      );
+      assert.equal(h.layer.getRowControls().summary.maxGapMinutes, 180);
+    }
+    h.layer.destroy();
+  }
 });
