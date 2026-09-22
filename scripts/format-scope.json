@@ -777,5 +777,6 @@
   "src/data/aisStreamSentinels.test.mjs",
   "scripts/qa-weather-perf.mjs",
   "scripts/qa-weather-journey.mjs",
+  "scripts/qa-weather-swap.mjs",
   "src/layers/weather/imageryHost.test.mjs"
 ]
