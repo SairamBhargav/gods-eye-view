@@ -2,7 +2,7 @@
 
 ## Unreleased — weather review
 
-- Cache exact-time weather images and tiles for 24 hours. Retain up to 13 decoded
+- Cache exact-time weather images and tiles for 24 hours. Retain up to 6 decoded
   global mosaics per renderer and warm the next observation during playback;
   tile prefetch is bounded to eight requests and cancels when suspended.
 
@@ -61,7 +61,6 @@
   with explicit coverage/freshness, recent observation playback and native Cesium tiles.
 - Increase desktop wind density to 7,200 paths and improve temperature contrast
   while retaining the 1,200-path narrow-screen budget and unchanged forecast values.
-
 
 - Expand Wind into a surface-weather prototype: globe-draped speed shading,
   optional same-run 2 m temperature and mean sea-level pressure, GFS/ECMWF model
@@ -130,16 +129,13 @@ Analyst records for loaded satellites, datacenters and dams, with explicit bound
   with shared playback/seek interpolation, easing and holds. Navigation and
   manual input cancel authored motion; older scene files retain existing flights.
 
-
 - Director validates bounded version-3 scene files before replacing a project,
   preserves unreadable browser saves, migrates legacy bloom once and preserves
   zero-pitch/low-altitude camera and scope/detection edits. Project normalization has a separate owner.
 
-
 - Separate Director timing, seek calculations, playback clocks and registered
   scene-pack presentation rules. Preserve authored content and controls; Stop
   releases pending hold timers and stale ticks cannot affect replacement playback.
-
 
 - Keep parked transit vehicles aligned to their world course during camera orbits, fall back to reported bearing, and keep vehicles with no course consistently screen-up.
 
@@ -335,7 +331,6 @@ of current runtime behavior, see [`docs/CURRENT-STATE.md`](docs/CURRENT-STATE.md
 - Add ECMWF IFS model selection to Wind (#464, thanks @beneduzi), with model-scoped forecast-step caches, cancellation of replaced requests, and separate issue/valid timestamps.
 
 - Add bounded Director feature actions with accessible controls, explicit camera/layer admission and cancellation; restore pack geometry on same-shot seek. Preserve existing scenes and content attribution.
-
 
 - Give application request services, terrain/floor caches and annotation lookup state explicit owners and cancellation; share them across controls, layers and voice.
 
@@ -1132,7 +1127,6 @@ represent previously published GitHub Releases.
 ## [0.1.0] — 2026-02-09
 
 - Initial project version.
-
 
 ### Live CCTV integration candidate
 

@@ -9,7 +9,8 @@ import {
 } from './infraredImage.js';
 // Bounded display detail for the hourly, approximately 3 km global product.
 const GLOBAL_TILE_MAXIMUM_LEVEL = 3;
-const MAX_MOSAICS = 13;
+// Six decoded 2048×1024 canvases (8 MiB each) bound the cache below 50 MiB.
+const MAX_MOSAICS = 6;
 const MAX_PREFETCH_TILES = 8;
 
 /** Own at most a displayed and a staging frame. Use native Cesium tile scheduling,

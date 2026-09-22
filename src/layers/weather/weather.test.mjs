@@ -1769,7 +1769,7 @@ async function showMosaic(h, time, infrared = 'filtered') {
   h.settle();
 }
 
-test('mosaic cache skips fetch and decode, separates modes, evicts LRU at 13 and clears per instance', async (t) => {
+test('mosaic cache skips fetch and decode, separates modes, evicts LRU at 6 and clears per instance', async (t) => {
   let fetches = 0,
     decodes = 0;
   const h = renderingHarness({
@@ -1797,18 +1797,18 @@ test('mosaic cache skips fetch and decode, separates modes, evicts LRU at 13 and
   assert.equal(fetches, 3);
   assert.equal(h.rendering.getDiagnostics().mosaic.cached, false);
   await showMosaic(h, times[0]);
-  const extra = Array.from({ length: 11 }, (_, i) =>
+  const extra = Array.from({ length: 4 }, (_, i) =>
     new Date(Date.parse(times[2]) + i * 3600_000).toISOString(),
   );
   for (const time of extra) await showMosaic(h, time);
   assert.deepEqual(h.rendering.getDiagnostics().cache, {
-    mosaics: 13,
+    mosaics: 6,
     prefetching: false,
   });
   await showMosaic(h, times[0]);
   assert.equal(
     fetches,
-    14,
+    7,
     'touching the oldest frame retained it ahead of the second frame',
   );
   await showMosaic(h, times[1]);
