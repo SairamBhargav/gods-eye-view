@@ -26,6 +26,17 @@
 [data-layer-id='wind'] .data-toggle-controls-info {
   grid-column: 1 / -1;
 }
+/* Readout rows keep one reserved status line; details live in the WEATHER panel. */
+.data-toggle-controls-status {
+  flex-basis: 100%;
+  grid-column: 1 / -1;
+  min-height: 1.4em;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  padding-top: 3px;
+  overflow-wrap: anywhere;
+}
 [data-layer-id='wind'] .data-toggle-legend-item {
   display: flex;
   flex-direction: column;
