@@ -497,6 +497,7 @@ function layerHarness({
   layer.enable();
   return {
     layer,
+    rendering,
     stages,
     eventTarget,
     motion,
@@ -713,6 +714,7 @@ test('global infrared is acquired before staging and cropped from one processed 
   assert.deepEqual(h.rendering.getDiagnostics().mosaic, {
     fetched: true,
     decodeMs: null,
+    cached: false,
   });
   decode.resolve({ width: 2048, height: 1024 });
   await flush();
@@ -1756,4 +1758,304 @@ test('observed descriptors keep configuration only and label satellite clouds by
     }
     h.layer.destroy();
   }
+});
+
+const globalSnapshot = { ...snapshot, product: 'clouds' };
+async function showMosaic(h, time, infrared = 'filtered') {
+  const pending = h.rendering.setFrame(globalSnapshot, time, { infrared });
+  await flush();
+  h.settle();
+  assert.equal(await pending, true);
+  h.settle();
+}
+
+test('mosaic cache skips fetch and decode, separates modes, evicts LRU at 13 and clears per instance', async (t) => {
+  let fetches = 0,
+    decodes = 0;
+  const h = renderingHarness({
+    fetchImpl: async () => {
+      fetches++;
+      return mockResponse();
+    },
+    decodeImage: async () => {
+      decodes++;
+      return { width: 2048, height: 1024 };
+    },
+  });
+  t.after(() => h.rendering.clear());
+  await showMosaic(h, times[0]);
+  await showMosaic(h, times[1]);
+  await showMosaic(h, times[0]);
+  assert.equal(fetches, 2);
+  assert.equal(decodes, 2);
+  assert.deepEqual(h.rendering.getDiagnostics().mosaic, {
+    fetched: false,
+    cached: true,
+    decodeMs: 0,
+  });
+  await showMosaic(h, times[0], 'full');
+  assert.equal(fetches, 3);
+  assert.equal(h.rendering.getDiagnostics().mosaic.cached, false);
+  await showMosaic(h, times[0]);
+  const extra = Array.from({ length: 11 }, (_, i) =>
+    new Date(Date.parse(times[2]) + i * 3600_000).toISOString(),
+  );
+  for (const time of extra) await showMosaic(h, time);
+  assert.deepEqual(h.rendering.getDiagnostics().cache, {
+    mosaics: 13,
+    prefetching: false,
+  });
+  await showMosaic(h, times[0]);
+  assert.equal(
+    fetches,
+    14,
+    'touching the oldest frame retained it ahead of the second frame',
+  );
+  await showMosaic(h, times[1]);
+  assert.equal(fetches, 15, 'least recently used frame was evicted');
+  h.rendering.clear();
+  assert.deepEqual(h.rendering.getDiagnostics().cache, {
+    mosaics: 0,
+    prefetching: false,
+  });
+  await showMosaic(h, times[0]);
+  assert.equal(fetches, 16);
+  const other = renderingHarness({
+    fetchImpl: async () => {
+      fetches++;
+      return mockResponse();
+    },
+  });
+  t.after(() => other.rendering.clear());
+  await showMosaic(other, times[0]);
+  assert.equal(fetches, 17, 'instances do not share canvases');
+});
+
+test('global prefetch warms a decoded frame without staging imagery and hits on selection', async (t) => {
+  let fetches = 0;
+  const h = renderingHarness({
+    fetchImpl: async () => {
+      fetches++;
+      return mockResponse();
+    },
+  });
+  t.after(() => h.rendering.clear());
+  await showMosaic(h, times[0]);
+  const warm = h.rendering.prefetch(globalSnapshot, times[1]);
+  assert.equal(h.rendering.getDiagnostics().cache.prefetching, true);
+  assert.equal(h.rendering.getDiagnostics().time, times[0]);
+  assert.equal(h.layers.length, 1);
+  assert.equal(await warm, true);
+  await showMosaic(h, times[1]);
+  assert.equal(fetches, 2);
+  assert.equal(h.rendering.getDiagnostics().mosaic.cached, true);
+  assert.equal(h.rendering.getDiagnostics().mosaic.decodeMs, 0);
+});
+
+test('cancelled or cleared speculative decodes cannot repopulate the cache', async () => {
+  for (const cancel of ['cancelPrefetch', 'clear', 'setHidden']) {
+    const decoded = deferred();
+    let signal,
+      closes = 0;
+    const h = renderingHarness({
+      fetchImpl: async (_url, options) => {
+        signal = options.signal;
+        return mockResponse();
+      },
+      decodeImage: () => decoded.promise,
+    });
+    const warm = h.rendering.prefetch(globalSnapshot, times[0]);
+    await flush();
+    h.rendering[cancel](true);
+    assert.equal(signal.aborted, true);
+    decoded.resolve({
+      width: 2048,
+      height: 1024,
+      close() {
+        closes++;
+      },
+    });
+    assert.equal(await warm, false);
+    assert.equal(closes, 1);
+    assert.deepEqual(h.rendering.getDiagnostics().cache, {
+      mosaics: 0,
+      prefetching: false,
+    });
+    h.rendering.clear();
+  }
+});
+
+test('tiled prefetch covers only visible product bounds at levels 0/1, caps eight requests and drains bodies', async (t) => {
+  const calls = [];
+  let bodies = 0;
+  const h = renderingHarness({
+    fetchImpl: async (url, { signal }) => {
+      calls.push({ url: new URL(url, 'http://localhost'), signal });
+      return {
+        ...mockResponse(),
+        arrayBuffer: async () => {
+          bodies++;
+          return new ArrayBuffer(1);
+        },
+      };
+    },
+  });
+  t.after(() => h.rendering.clear());
+  h.viewer.camera = {
+    computeViewRectangle: () =>
+      Cesium.Rectangle.fromDegrees(-120, 25, -100, 50),
+  };
+  assert.equal(await h.rendering.prefetch(snapshot, times[1]), true);
+  assert.equal(calls.length, 2);
+  assert.equal(bodies, 2);
+  assert.deepEqual(
+    calls.map(({ url }) =>
+      ['z', 'x', 'y'].map((key) => url.searchParams.get(key)),
+    ),
+    [
+      ['0', '0', '0'],
+      ['1', '0', '0'],
+    ],
+  );
+  assert.ok(
+    calls.every(({ url }) => url.searchParams.get('time') === times[1]),
+  );
+  assert.equal(
+    await h.rendering.prefetch(snapshot, times[1]),
+    false,
+    'same completed work is not repeated',
+  );
+  h.viewer.camera.computeViewRectangle = () =>
+    Cesium.Rectangle.fromDegrees(100, 25, 120, 50);
+  await h.rendering.prefetch(snapshot, times[2]);
+  assert.equal(calls.length, 2, 'view outside product bounds fetches nothing');
+  h.viewer.camera.computeViewRectangle = () => Cesium.Rectangle.MAX_VALUE;
+  const world = {
+    ...snapshot,
+    bounds: { west: -180, south: -90, east: 180, north: 90 },
+  };
+  await h.rendering.prefetch(world, times[2]);
+  assert.equal(
+    calls.length,
+    10,
+    'world view is capped at eight additional requests',
+  );
+  assert.equal(bodies, 10);
+  assert.equal(new Set(calls.slice(2).map(({ url }) => url.href)).size, 8);
+});
+
+test('prefetch is best effort, aborts on replacement or host suspension, and skips hidden frames', async (t) => {
+  let host = { collection: null, kind: 'globe' };
+  const signals = [];
+  const h = renderingHarness({
+    getHost: () => host,
+    fetchImpl: (_url, { signal }) =>
+      new Promise((_, reject) => {
+        signals.push(signal);
+        signal.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        });
+      }),
+  });
+  host.collection = h.viewer.imageryLayers;
+  t.after(() => h.rendering.clear());
+  const first = h.rendering.prefetch(snapshot, times[1]);
+  const shown = h.rendering.setFrame(snapshot, times[0]);
+  h.settle();
+  assert.equal(
+    await shown,
+    true,
+    'current frame never waits for speculative work',
+  );
+  assert.equal(await first, false);
+  assert.ok(signals.every((signal) => signal.aborted));
+  const second = h.rendering.prefetch(snapshot, times[1]);
+  host = { collection: null, kind: 'none' };
+  h.rendering.rehome();
+  assert.equal(await second, false);
+  const count = signals.length;
+  assert.equal(await h.rendering.prefetch(snapshot, times[2]), false);
+  host = { collection: h.viewer.imageryLayers, kind: 'globe' };
+  h.rendering.setHidden(true);
+  assert.equal(await h.rendering.prefetch(snapshot, times[2]), false);
+  assert.equal(signals.length, count);
+  assert.equal(h.rendering.getDiagnostics().cache.prefetching, false);
+});
+
+test('failed prefetch leaves the current frame and errors unchanged and releases its deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = renderingHarness({
+    fetchImpl: async () => {
+      throw new Error('offline');
+    },
+  });
+  t.after(() => h.rendering.clear());
+  const shown = h.rendering.setFrame(snapshot, times[0]);
+  h.settle();
+  await shown;
+  const before = h.rendering.getDiagnostics();
+  assert.equal(await h.rendering.prefetch(snapshot, times[1]), false);
+  assert.deepEqual(h.rendering.getDiagnostics(), before);
+  t.mock.timers.tick(30_000);
+  assert.deepEqual(h.rendering.getDiagnostics(), before);
+});
+
+test('layer warms the next advertised observation only after a successful playing frame, wrapping at the end', async (t) => {
+  const clock = createWeatherClock();
+  const h = layerHarness({ clock });
+  const warmed = [];
+  let cancels = 0;
+  h.rendering.prefetch = async (manifest, time, options) => {
+    warmed.push({ manifest, time, options });
+  };
+  h.rendering.cancelPrefetch = () => {
+    cancels++;
+  };
+  t.after(() => {
+    h.layer.destroy();
+    clock.destroy();
+  });
+  const updated = h.layer.update();
+  await flush();
+  h.stages.at(-1).finish();
+  await updated;
+  assert.equal(warmed.length, 0);
+  const play = clock.play();
+  await flush();
+  assert.equal(warmed.length, 0, 'still staging');
+  h.stages.at(-1).finish();
+  await play;
+  assert.deepEqual(
+    warmed.map(({ time }) => time),
+    [times[0]],
+  );
+  assert.deepEqual(warmed[0].options, { infrared: 'filtered' });
+  const next = clock.setTarget(times[0]);
+  await flush();
+  h.stages.at(-1).finish();
+  await next;
+  assert.deepEqual(
+    warmed.map(({ time }) => time),
+    [times[0], times[1]],
+  );
+  const failed = clock.setTarget(times[1]);
+  await flush();
+  h.stages.at(-1).finish(false);
+  await failed;
+  assert.equal(warmed.length, 2);
+  const priorCancels = cancels;
+  clock.pause();
+  assert.ok(cancels > priorCancels);
+  const paused = clock.setTarget(times[2]);
+  await flush();
+  h.stages.at(-1).finish();
+  await paused;
+  assert.equal(warmed.length, 2);
+  await clock.play();
+  h.documentRef.hidden = true;
+  h.documentRef.emit('visibilitychange');
+  await flush();
+  h.stages.at(-1).finish();
+  await flush();
+  assert.equal(warmed.length, 2, 'hidden products do not prefetch');
 });

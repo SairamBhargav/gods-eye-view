@@ -841,3 +841,49 @@ test('whole-image cache identity includes metadata bounds and shares cancellatio
   assert.equal((await stalled.request(wholeImage())).statusCode, 503);
   assert.equal(cancelled, true);
 });
+
+test('exact frame tiles and images are immutable for a day; manifests and errors are uncached', async () => {
+  const { request } = install({
+    fetchImpl: async (url) => {
+      if (url.includes('GetCapabilities')) return new Response(xml());
+      const width = Number(new URL(url).searchParams.get('width'));
+      return image(width === 2048 ? png(2048, 1024) : png());
+    },
+  });
+  for (const url of [tile(), wholeImage()]) {
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const response = await request(url);
+      assert.equal(response.statusCode, 200);
+      assert.equal(
+        response.headers['Cache-Control'],
+        'public, max-age=86400, immutable',
+      );
+    }
+  }
+  for (const product of ['radar', 'clouds', 'clouds-regional', 'lightning']) {
+    const response = await request(`/manifest?product=${product}`);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['Cache-Control'], 'no-store');
+  }
+  for (const url of [
+    tile({ time: 'latest' }),
+    wholeImage('latest'),
+    '/tile?product=radar&z=0&x=0&y=0',
+    '/image?product=clouds',
+  ]) {
+    const response = await request(url);
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.headers['Cache-Control'], 'no-store');
+  }
+  const failed = install({
+    fetchImpl: async (url) => {
+      if (url.includes('GetCapabilities')) return new Response(xml());
+      throw new Error('offline');
+    },
+  });
+  for (const url of [tile(), wholeImage()]) {
+    const response = await failed.request(url);
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.headers['Cache-Control'], 'no-store');
+  }
+});

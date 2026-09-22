@@ -67,6 +67,17 @@ on a geographic 2×1 root grid bounded to the manifest extent, avoiding
 request-dependent contrast seams. Maximum level 3 accommodates Cesium 1.138's
 `maximumLevel - 1` draping coverage clamp. Rehoming reuses the decoded provider.
 Regional infrared retains network tiles and processes each decoded tile once.
+Exact-time tile and image responses are immutable for 24 hours; manifests and
+errors remain uncached. Each weather renderer retains up to 13 processed global
+mosaics in a least-recently-used cache keyed by observation time and infrared
+mode (up to 104 MiB of canvas pixels). Disable clears the cache. Cache hits skip
+fetch/decode and report `mosaic.cached: true` with zero decode time.
+During playback, a successful frame warms the next advertised observation,
+wrapping at the end. Global imagery warms a decoded mosaic; tiled products fetch
+at most eight level-0/1 tiles intersecting the view and product bounds. Prefetch
+is best effort, has a deadline, and cancels on frame replacement, pause,
+suspension or clear. Diagnostics expose mosaic count and active prefetch state.
+Browser cache reuse and scrub-back latency still require browser verification.
 Both Google tileset routes load draped imagery asynchronously so tiles keep
 drawing their own texture while weather loads. A replacement becomes visible
 before the previous layer retires on the next rendered frame; failed acquisition

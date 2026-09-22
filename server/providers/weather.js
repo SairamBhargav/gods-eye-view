@@ -506,7 +506,7 @@ export function weatherProxy({
       }
       res.writeHead(200, {
         'Content-Type': 'image/png',
-        'Cache-Control': 'public, max-age=240',
+        'Cache-Control': 'public, max-age=86400, immutable',
         'X-Content-Type-Options': 'nosniff',
       });
       res.end(cached.bytes);

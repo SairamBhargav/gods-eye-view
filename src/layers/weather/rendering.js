@@ -2,12 +2,15 @@ import { weatherTileUrl } from './source.js';
 import { orderWeatherImagery } from './imageryOrder.js';
 import { imageryHostStatus } from './imageryHost.js';
 import { createRasterTileProvider } from './rasterTiles.js';
+import { readResponseBytesCapped } from '../../sources/httpBody.js';
 import {
   acquireInfraredMosaic,
   processInfraredImage,
 } from './infraredImage.js';
 // Bounded display detail for the hourly, approximately 3 km global product.
 const GLOBAL_TILE_MAXIMUM_LEVEL = 3;
+const MAX_MOSAICS = 13;
+const MAX_PREFETCH_TILES = 8;
 
 /** Own at most a displayed and a staging frame. Use native Cesium tile scheduling,
  * projection and texture disposal; the application clock is never touched. */
@@ -28,6 +31,76 @@ export function createWeatherRendering({
   let alpha = 0.7;
   let frameHidden = false;
   let lastError = null;
+  const mosaics = new Map();
+  let prefetchJob = null;
+  let prefetchedKey = null;
+
+  function cancelPrefetch() {
+    clearTimeout(prefetchJob?.timeout);
+    prefetchJob?.controller.abort();
+    prefetchJob = null;
+    prefetchedKey = null;
+  }
+
+  async function mosaic(time, mode, signal, onFetched) {
+    signal.throwIfAborted();
+    const key = `${time}|${mode}`;
+    const texture = mosaics.get(key);
+    if (texture) {
+      mosaics.delete(key);
+      mosaics.set(key, texture);
+      return { texture, decodeMs: 0, cached: true };
+    }
+    const result = await acquireInfraredMosaic(time, {
+      signal,
+      mode,
+      createCanvas,
+      fetchImpl,
+      decodeImage,
+      now,
+      onFetched,
+    });
+    // An aborted decode may still finish; never repopulate a cleared instance.
+    signal.throwIfAborted();
+    mosaics.delete(key);
+    mosaics.set(key, result.texture);
+    while (mosaics.size > MAX_MOSAICS)
+      mosaics.delete(mosaics.keys().next().value);
+    return { ...result, cached: false };
+  }
+
+  function prefetchTiles(snapshot, time) {
+    const { west, south, east, north } = snapshot.bounds;
+    const bounds = cesium.Rectangle.fromDegrees(west, south, east, north);
+    const view = viewer.camera?.computeViewRectangle?.(
+      viewer.scene.globe?.ellipsoid,
+    );
+    const coverage = view
+      ? cesium.Rectangle.intersection(bounds, view)
+      : bounds;
+    if (!coverage) return [];
+    const scheme = new cesium.GeographicTilingScheme();
+    const template = weatherTileUrl(snapshot.product, time);
+    const urls = [];
+    for (let z = 0; z <= 1; z++) {
+      for (let y = 0; y < scheme.getNumberOfYTilesAtLevel(z); y++) {
+        for (let x = 0; x < scheme.getNumberOfXTilesAtLevel(z); x++) {
+          if (
+            !cesium.Rectangle.intersection(
+              coverage,
+              scheme.tileXYToRectangle(x, y, z),
+            )
+          )
+            continue;
+          urls.push(
+            template.replace('{z}', z).replace('{x}', x).replace('{y}', y),
+          );
+          if (urls.length === MAX_PREFETCH_TILES) return urls;
+        }
+      }
+    }
+    return urls;
+  }
 
   function remove(frame) {
     if (!frame) return;
@@ -71,6 +144,7 @@ export function createWeatherRendering({
       (incoming && incoming.collection !== collection);
     const visibilityChanged = current && current.layer.show === hidden;
     if (changed || imageryHostStatus(host, viewer.camera) !== null) {
+      cancelPrefetch();
       cancelIncoming();
       for (const frame of retiring) remove(frame);
     }
@@ -92,8 +166,49 @@ export function createWeatherRendering({
   }
   const api = {
     rehome,
+    cancelPrefetch,
+    async prefetch(snapshot, time, { infrared = 'filtered' } = {}) {
+      let job;
+      try {
+        if (
+          frameHidden ||
+          incoming ||
+          imageryHostStatus(getHost(), viewer.camera) ||
+          !snapshot.times.includes(time)
+        )
+          return false;
+        const global = snapshot.product === 'clouds';
+        const urls = global ? [] : prefetchTiles(snapshot, time);
+        const key = global ? `${time}|${infrared}` : urls.join('|');
+        if (prefetchJob?.key === key || prefetchedKey === key) return false;
+        cancelPrefetch();
+        job = { key, controller: new AbortController() };
+        prefetchJob = job;
+        const { signal } = job.controller;
+        job.timeout = setTimeout(() => job.controller.abort(), timeoutMs);
+        if (global) await mosaic(time, infrared, signal);
+        else
+          await Promise.all(
+            urls.map(async (url) => {
+              const response = await fetchImpl(url, { signal });
+              if (!response.ok) throw new Error('Weather prefetch unavailable');
+              await readResponseBytesCapped(response, 1024 * 1024);
+            }),
+          );
+        signal.throwIfAborted();
+        if (prefetchJob === job) prefetchedKey = key;
+        return true;
+      } catch {
+        job?.controller.abort();
+        return false;
+      } finally {
+        clearTimeout(job?.timeout);
+        if (job && prefetchJob === job) prefetchJob = null;
+      }
+    },
     async setFrame(snapshot, time, { signal, infrared = 'filtered' } = {}) {
       signal?.throwIfAborted();
+      cancelPrefetch();
       rehome();
       cancelIncoming();
       const host = getHost();
@@ -114,7 +229,9 @@ export function createWeatherRendering({
         snapshot,
         time,
         infrared,
-        mosaic: global ? { fetched: false, decodeMs: null } : undefined,
+        mosaic: global
+          ? { fetched: false, decodeMs: null, cached: false }
+          : undefined,
         controller: new AbortController(),
         collection,
         kind,
@@ -317,19 +434,12 @@ export function createWeatherRendering({
         onChange();
       };
       if (global) {
-        void acquireInfraredMosaic(time, {
-          signal: frame.controller.signal,
-          mode: infrared,
-          createCanvas,
-          fetchImpl,
-          decodeImage,
-          now,
-          onFetched: () => {
-            frame.mosaic.fetched = true;
-          },
+        void mosaic(time, infrared, frame.controller.signal, () => {
+          frame.mosaic.fetched = true;
         })
-          .then(({ texture, decodeMs }) => {
+          .then(({ texture, decodeMs, cached }) => {
             frame.mosaic.decodeMs = decodeMs;
+            frame.mosaic.cached = cached;
             install(texture);
           })
           .catch(() => finish(false));
@@ -347,6 +457,7 @@ export function createWeatherRendering({
     setHidden(value) {
       frameHidden = Boolean(value);
       if (frameHidden) {
+        cancelPrefetch();
         cancelIncoming();
         for (const frame of retiring) remove(frame);
       }
@@ -359,16 +470,19 @@ export function createWeatherRendering({
       viewer.scene.requestRender();
     },
     clear() {
+      cancelPrefetch();
       cancelIncoming();
       remove(current);
       for (const frame of retiring) remove(frame);
       current = null;
       frameHidden = false;
       lastError = null;
+      mosaics.clear();
       viewer.scene.requestRender();
     },
     getDiagnostics() {
       return {
+        cache: { mosaics: mosaics.size, prefetching: !!prefetchJob },
         imageryCount:
           Number(!!current) + Number(!!incoming?.layer) + retiring.size,
         mosaic: (incoming || current)?.mosaic,

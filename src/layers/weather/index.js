@@ -87,7 +87,10 @@ export function createWeatherLayer({
     imageryHost?.() ?? { collection: viewer?.imageryLayers, kind: 'globe' };
   const notify = () => listener?.();
   const shownTime = () => (noFrame ? null : rendering?.getDiagnostics().time);
-  const unsubscribeClock = clock?.subscribe(notify);
+  const unsubscribeClock = clock?.subscribe(() => {
+    if (!clock.getState().playing || suspended()) rendering?.cancelPrefetch?.();
+    notify();
+  });
   const observationDelayed = () =>
     manifest?.latest &&
     Date.now() - Date.parse(manifest.latest) >
@@ -95,11 +98,13 @@ export function createWeatherLayer({
   const stop = () => {
     if (clock) return;
     playing = false;
+    rendering?.cancelPrefetch?.();
     clearTimeout(timer);
     timer = null;
   };
   const suspended = () => hostHidden || documentRef?.hidden || motion?.matches;
   const onVisibility = () => {
+    if (suspended()) rendering?.cancelPrefetch?.();
     if (clock) void clock.refresh();
     else if (suspended()) stop();
     notify();
@@ -181,6 +186,22 @@ export function createWeatherLayer({
       isSuspended: suspended,
     });
   }
+  async function warmNext(time) {
+    if (
+      !enabled ||
+      suspended() ||
+      !(clock ? clock.getState().playing : playing)
+    )
+      return;
+    const times = manifest?.times ?? [];
+    const next = times[(times.indexOf(time) + 1) % times.length];
+    if (!next || next === time) return;
+    try {
+      await rendering.prefetch?.(manifest, next, { infrared });
+    } catch {
+      // Speculative work must not change the displayed frame or playback state.
+    }
+  }
   async function show(time, signal) {
     checkHost(false);
     if (!enabled || hostHidden || !manifest?.times?.includes(time))
@@ -204,6 +225,7 @@ export function createWeatherLayer({
       if (ok) {
         noFrame = false;
         rendering.setHidden?.(false);
+        void warmNext(time);
       }
       error = ok ? null : 'Frame unavailable; previous observation retained';
       if (!ok) stop();

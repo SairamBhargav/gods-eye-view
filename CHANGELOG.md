@@ -2,6 +2,10 @@
 
 ## Unreleased — weather review
 
+- Cache exact-time weather images and tiles for 24 hours. Retain up to 13 decoded
+  global mosaics per renderer and warm the next observation during playback;
+  tile prefetch is bounded to eight requests and cancels when suspended.
+
 - Move weather times, coverage, legends and cyclone advisory details into keyed
   right-rail cards; left rows keep status and configuration. Use one native
   observed-history timeline with local preview and coalesced drag commits.
