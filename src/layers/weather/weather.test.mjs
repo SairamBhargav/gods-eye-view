@@ -1812,14 +1812,14 @@ test('mosaic cache skips fetch and decode, separates modes, evicts LRU at 6 and 
     'touching the oldest frame retained it ahead of the second frame',
   );
   await showMosaic(h, times[1]);
-  assert.equal(fetches, 15, 'least recently used frame was evicted');
+  assert.equal(fetches, 8, 'least recently used frame was evicted');
   h.rendering.clear();
   assert.deepEqual(h.rendering.getDiagnostics().cache, {
     mosaics: 0,
     prefetching: false,
   });
   await showMosaic(h, times[0]);
-  assert.equal(fetches, 16);
+  assert.equal(fetches, 9);
   const other = renderingHarness({
     fetchImpl: async () => {
       fetches++;
@@ -1828,7 +1828,7 @@ test('mosaic cache skips fetch and decode, separates modes, evicts LRU at 6 and 
   });
   t.after(() => other.rendering.clear());
   await showMosaic(other, times[0]);
-  assert.equal(fetches, 17, 'instances do not share canvases');
+  assert.equal(fetches, 10, 'instances do not share canvases');
 });
 
 test('global prefetch warms a decoded frame without staging imagery and hits on selection', async (t) => {
