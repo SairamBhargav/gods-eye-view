@@ -241,3 +241,25 @@ test('count, hidden-empty and first-appearance expansion survive remount and own
   assert.equal(expanded.clicks(), 1);
   other.destroy();
 });
+
+test('a stored or shared collapse choice is not overridden on first appearance', () => {
+  for (const preference of ['stored', 'share']) {
+    const f = fixture();
+    f.panel.dataset = { collapsedPreference: preference };
+    const view = createWeatherPanel(f);
+    view.update([radar]);
+    assert.equal(f.panel.hidden, false);
+    assert.equal(
+      f.clicks(),
+      0,
+      `${preference} preference keeps the panel collapsed`,
+    );
+    view.destroy();
+  }
+  const f = fixture();
+  f.panel.dataset = { collapsedPreference: 'default' };
+  const view = createWeatherPanel(f);
+  view.update([radar]);
+  assert.equal(f.clicks(), 1, 'a default state still expands once');
+  view.destroy();
+});

@@ -169,7 +169,13 @@ export function createWeatherPanel({
     if (panel) set(panel, 'hidden', hidden);
     if (!hidden && panel && !appearedDocuments.has(document)) {
       appearedDocuments.add(document);
-      if (panel.classList.contains('collapsed'))
+      // First appearance opens the panel unless a stored or shared collapse
+      // choice exists (marked by the panel chrome when it restored the state).
+      const preference = panel.dataset?.collapsedPreference;
+      if (
+        panel.classList.contains('collapsed') &&
+        (preference === undefined || preference === 'default')
+      )
         panel.querySelector('[data-collapse-target="weather-panel"]')?.click();
     }
   };

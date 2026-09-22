@@ -285,7 +285,9 @@ existing `.panel-header`, collapse button and a dedicated body. Register it
 with the existing panel chrome/layout owners; do not allocate rail space in
 the body renderer. Set `hidden` while empty so the allocator ignores it, and
 expand through the existing collapse button only on first appearance per page
-session. Preserve the user's later collapse choice, including body remounts.
+session, and only when the chrome marked the restored state as a default
+(`data-collapsed-preference`), never over a stored or shared choice. Preserve
+the user's later collapse choice, including body remounts.
 
 Compose `createRailCards({ container, document })` and
 `createRailTimeline({ container, document, onCommit, onPreview, onStep,
