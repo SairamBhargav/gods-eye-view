@@ -297,6 +297,40 @@
   flex: 1 1 auto;
   max-height: none;
 }
+/* Synchronous intrinsic measurement, independent of focus and allocation.
+   This attribute is not observed by the rail's layout scheduler. */
+#right-context-rail[data-rail-measuring] {
+  height: auto !important;
+  max-height: none !important;
+  transition: none !important;
+}
+#right-context-rail[data-rail-measuring] > [data-panel-id]:not([hidden]) {
+  --right-panel-allocated-height: initial !important;
+  flex: 0 0 auto !important;
+  height: auto !important;
+  max-height: none !important;
+  transition: none !important;
+}
+#right-context-rail[data-rail-measuring]
+  > [data-panel-id].collapsed:not([hidden]) {
+  display: block !important;
+}
+#right-context-rail[data-rail-measuring]
+  > [data-panel-id]:not(.collapsed)
+  > .cctv-panel-inner,
+#right-context-rail[data-rail-measuring]
+  > [data-panel-id]:not(.collapsed)
+  > .weather-panel-inner,
+#right-context-rail[data-rail-measuring]
+  > [data-panel-id]:not(.collapsed)
+  > .global-context-panel-inner {
+  height: auto !important;
+  max-height: none !important;
+}
+#right-context-rail[data-rail-measuring] #weather-panel-body,
+#right-context-rail[data-rail-measuring] .space-mission-roster-list {
+  max-height: none !important;
+}
 #space-mission-panel {
   width: 100%;
   margin-top: 8px;

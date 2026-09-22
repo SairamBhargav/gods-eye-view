@@ -297,3 +297,162 @@ test('natural height includes visible content, margins and wrapper chrome, exclu
     100,
   );
 });
+
+// Reproduce the allocation-dependent readings seen beside the weather card.
+// Outside measurement, CCTV is 391 px in focus and 629 px in normal mode;
+// Removing only the allocation leaves focus CSS active: its next reading is
+// 422 px, so the old decision exits focus and then re-enters on the 629 px read.
+function thrashingRightRail({ focused = false, weatherOpen = false } = {}) {
+  const f = fixture('right');
+  f.options.windowRef.innerHeight = 920;
+  f.options.leftStack.rect.top = 439.6;
+  f.stack.computed.rowGap = '8px';
+  const display = element('pp-toggles', { collapsed: true });
+  const cctv = element('cctv-panel', { height: 629 });
+  const weather = element('weather-panel', {
+    height: 444,
+    collapsed: !weatherOpen,
+  });
+  const context = element('global-context-panel', { collapsed: true });
+  if (!weatherOpen) weather.classList.add('layout-auto-collapsed');
+  f.stack.children = [display, cctv, weather, context];
+  f.stack.classList.toggle('layout-focus', focused);
+  f.options.preferredPanelId = cctv.id;
+  f.options.displayPanel = display;
+  const allocation = '--right-panel-allocated-height';
+  const measuring = () =>
+    f.stack.getAttribute('data-rail-measuring') !== undefined;
+  for (const panel of f.stack.children) {
+    panel.parentElement = f.stack;
+    panel.intrinsicHeight = panel.rect.height;
+    panel.style.setProperty(allocation, '391px');
+    panel.getBoundingClientRect = () => {
+      let height;
+      if (panel.classList.contains('collapsed')) {
+        height =
+          measuring() || f.stack.classList.contains('layout-focus') ? 44 : 0;
+      } else if (measuring()) {
+        height = panel.intrinsicHeight;
+      } else if (f.stack.classList.contains('layout-focus')) {
+        height = 391;
+      } else {
+        height = panel.intrinsicHeight;
+      }
+      return { ...panel.rect, height, bottom: panel.rect.top + height };
+    };
+    Object.defineProperty(panel, 'scrollHeight', {
+      get: () => {
+        if (measuring())
+          return panel.classList.contains('collapsed')
+            ? 44
+            : panel.intrinsicHeight;
+        if (panel.classList.contains('collapsed'))
+          return panel.getBoundingClientRect().height;
+        return f.stack.classList.contains('layout-focus') &&
+          panel.style.getPropertyValue(allocation)
+          ? 603
+          : 422;
+      },
+    });
+  }
+  return { ...f, cctv, weather };
+}
+
+for (const focused of [false, true]) {
+  test(`right rail settles mode-dependent CCTV and weather heights within two passes from ${focused ? 'focus' : 'normal'}`, () => {
+    const f = thrashingRightRail({ focused });
+    assert.equal(f.cctv.getBoundingClientRect().height, focused ? 391 : 629);
+    assert.equal(f.weather.getBoundingClientRect().height, focused ? 44 : 0);
+    const modes = [];
+    const needs = [];
+    for (let pass = 0; pass < 10; pass++) {
+      f.run();
+      modes.push(f.stack.classList.contains('layout-focus'));
+      needs.push(f.stack.dataset.requiredHeight);
+      assert.equal(f.stack.dataset.availableHeight, '443.6');
+      assert.equal(f.stack.getAttribute('data-rail-measuring'), undefined);
+    }
+    assert.deepEqual(modes.slice(1), Array(9).fill(true));
+    assert.deepEqual(needs, Array(10).fill('681.0'));
+    assert.equal(f.retries(), 0);
+    assert.equal(f.cctv.writes.filter(([op]) => op === 'remove').length, 0);
+  });
+}
+
+test('right rail keeps focus through 30 px content growth inside the hysteresis band', () => {
+  const f = thrashingRightRail();
+  f.run();
+  // Header + gap contribute 52 px: need moves 420 -> 450 -> 420.
+  for (const height of [368, 398, 368, 398, 368]) {
+    f.cctv.intrinsicHeight = height;
+    f.run();
+    assert.equal(f.stack.classList.contains('layout-focus'), true);
+  }
+  f.cctv.intrinsicHeight = 335; // Need 387 < 443.6 - 55.2.
+  f.run();
+  assert.equal(f.stack.classList.contains('layout-focus'), false);
+  f.cctv.intrinsicHeight = 365;
+  f.run();
+  assert.equal(f.stack.classList.contains('layout-focus'), false);
+});
+
+test('right rail enters focus only above available height and leaves below the full deadband', () => {
+  const f = thrashingRightRail();
+  f.options.windowRef.innerHeight = 1000;
+  f.options.leftStack.rect.top = 500;
+  f.cctv.intrinsicHeight = 408; // Need equals available (460 px).
+  f.run();
+  assert.equal(f.stack.classList.contains('layout-focus'), false);
+  f.cctv.intrinsicHeight = 409;
+  f.run();
+  assert.equal(f.stack.classList.contains('layout-focus'), true);
+  f.cctv.intrinsicHeight = 348; // Need equals the 400 px exit boundary.
+  f.run();
+  assert.equal(f.stack.classList.contains('layout-focus'), true);
+  f.cctv.intrinsicHeight = 347;
+  f.run();
+  assert.equal(f.stack.classList.contains('layout-focus'), false);
+});
+
+test('right rail auto-collapse requests only one retry and settles within two passes', () => {
+  const f = thrashingRightRail({ weatherOpen: true });
+  const modes = [];
+  for (let pass = 0; pass < 10; pass++) {
+    f.run();
+    modes.push(f.stack.classList.contains('layout-focus'));
+  }
+  assert.deepEqual(f.collapsed, ['weather-panel']);
+  assert.equal(f.retries(), 1);
+  assert.deepEqual(modes.slice(1), Array(9).fill(true));
+});
+
+test('right rail retry cannot enqueue another retry even if disclosure changes before it runs', () => {
+  const f = thrashingRightRail({ weatherOpen: true });
+  f.run();
+  assert.equal(f.retries(), 1);
+  f.weather.classList.remove('collapsed', 'layout-auto-collapsed');
+  f.run();
+  assert.equal(f.retries(), 1);
+  assert.equal(f.stack.dataset.layoutMode, 'focus');
+});
+
+test('right rail restores presentation even when intrinsic measurement throws', () => {
+  const f = thrashingRightRail();
+  f.cctv.getBoundingClientRect = () => {
+    throw new Error('measurement failed');
+  };
+  assert.throws(() => f.run(), /measurement failed/);
+  assert.equal(f.stack.getAttribute('data-rail-measuring'), undefined);
+});
+
+for (const variant of ['minimal', 'full']) {
+  test(`right rail does not retry collapse that the ${variant} HUD immediately restores`, () => {
+    const f = fixture('right', { hud: { visible: true, variant } });
+    f.expand(f.first, 900);
+    f.expand(f.second, 900);
+    for (let pass = 0; pass < 10; pass++) f.run();
+    assert.equal(f.retries(), 0);
+    assert.equal(f.first.classList.contains('collapsed'), false);
+    assert.equal(f.second.classList.contains('collapsed'), false);
+  });
+}
